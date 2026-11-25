@@ -247,9 +247,9 @@ Please do not submit copyrighted Minecraft assets or other material unless you h
 
 ## License
 
-**No repository license has been declared yet.** Until a license is added, the default copyright rules apply; others do not automatically receive permission to reuse, modify, or distribute this project's code.
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for the full license text.
 
-If you intend to publish the original code as open source, choose a license and add its full text in a root-level `LICENSE` file. Do not assume that a license for this code would cover Minecraft/Mojang/Microsoft trademarks or third-party assets.
+The MIT License applies only to the original code and other material in this repository that the project maintainer has the right to license. It does not grant rights to Minecraft/Mojang/Microsoft trademarks, or to third-party assets, libraries, or content. Those remain subject to their respective owners' terms and licenses.
 
 ## Credits and trademark notice
 
