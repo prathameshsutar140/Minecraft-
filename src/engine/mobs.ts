@@ -67,16 +67,56 @@ export interface EnderPearlEntity {
   age: number;
 }
 
+const mobTexCache = new Map<string, THREE.CanvasTexture>();
+
+function getMobPixelTexture(colorHex: number, variance = 14, camoSpeckles = false): THREE.CanvasTexture {
+  const key = `${colorHex}_${variance}_${camoSpeckles ? 1 : 0}`;
+  const cached = mobTexCache.get(key);
+  if (cached) return cached;
+
+  const c = document.createElement('canvas');
+  c.width = 16;
+  c.height = 16;
+  const ctx = c.getContext('2d')!;
+  const r0 = (colorHex >> 16) & 255;
+  const g0 = (colorHex >> 8) & 255;
+  const b0 = colorHex & 255;
+
+  for (let y = 0; y < 16; y++) {
+    for (let x = 0; x < 16; x++) {
+      let h = (Math.imul(x + 11, 374761393) + Math.imul(y + 23, 668265263) + Math.imul(colorHex, 1274126177)) | 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      const n = (((h ^ (h >>> 16)) >>> 0) / 4294967296 - 0.5) * 2;
+      const speck = camoSpeckles && Math.abs(n) > 0.65 ? (n > 0 ? 28 : -28) : n * variance;
+      const r = Math.max(0, Math.min(255, Math.round(r0 + speck)));
+      const g = Math.max(0, Math.min(255, Math.round(g0 + speck)));
+      const b = Math.max(0, Math.min(255, Math.round(b0 + speck)));
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  mobTexCache.set(key, tex);
+  return tex;
+}
+
 function makePart(
   w: number,
   h: number,
   d: number,
   color: number,
-  roughness = 0.85,
-  metalness = 0.04
+  roughness = 0.88,
+  metalness = 0.02,
+  camo = false
 ): { mesh: THREE.Mesh; mat: THREE.MeshStandardMaterial } {
   const geo = new THREE.BoxGeometry(w, h, d);
-  const mat = new THREE.MeshStandardMaterial({ color, roughness, metalness });
+  const map = getMobPixelTexture(color, color < 0x222222 ? 6 : 16, camo);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, map, roughness, metalness });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;

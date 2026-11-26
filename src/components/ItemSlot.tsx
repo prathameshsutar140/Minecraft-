@@ -8,6 +8,7 @@ interface ItemSlotProps {
   atlasCanvas: HTMLCanvasElement | null;
   selected?: boolean;
   size?: number;
+  variant?: 'inventory' | 'hotbar';
   placeholder?: string;
   onMouseDown?: (e: React.MouseEvent) => void;
   onMouseEnter?: () => void;
@@ -19,6 +20,7 @@ export const ItemSlot: React.FC<ItemSlotProps> = ({
   atlasCanvas,
   selected = false,
   size = 44,
+  variant = 'inventory',
   placeholder,
   onMouseDown,
   onMouseEnter,
@@ -38,19 +40,23 @@ export const ItemSlot: React.FC<ItemSlotProps> = ({
       : def.name
     : undefined;
 
+  const slotClass = selected
+    ? 'bg-[#6b6b6b]/85 border-[3px] border-[#f8fafc] shadow-[inset_0_0_0_2px_#525252,0_0_0_2px_#000000] scale-[1.06] z-10'
+    : variant === 'hotbar'
+      ? stack?.enchantment
+        ? 'mc-hotbar-slot ring-1 ring-inset ring-[#c084fc]'
+        : 'mc-hotbar-slot'
+      : stack?.enchantment
+        ? 'mc-slot ring-1 ring-inset ring-[#c084fc]'
+        : 'mc-slot';
+
   return (
     <div
       onMouseDown={onMouseDown}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       style={{ width: size, height: size }}
-      className={`relative flex items-center justify-center shrink-0 select-none ${
-        selected
-          ? 'bg-[#b3b3b3] border-2 border-white shadow-[0_0_0_2px_#111]'
-          : stack?.enchantment
-            ? 'mc-slot ring-1 ring-inset ring-[#c084fc]'
-            : 'mc-slot'
-      }`}
+      className={`relative flex items-center justify-center shrink-0 select-none ${slotClass}`}
       title={titleText}
     >
       {stack?.enchantment && (

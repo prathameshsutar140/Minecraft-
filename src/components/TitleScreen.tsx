@@ -52,62 +52,112 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
   return (
     <div className="fixed inset-0 z-20 flex flex-col items-center justify-between py-6 sm:py-10 px-4 sm:px-6 overflow-y-auto bg-gradient-to-b from-black/45 via-black/15 to-black/65 pointer-events-auto">
       {/* Bespoke Inline SVG Minecraft Java Edition Lockup */}
-      <div className="flex flex-col items-center mt-4">
+      <div className="relative flex flex-col items-center mt-4 select-none">
         <svg
-          viewBox="0 0 640 128"
-          className="w-[min(600px,88vw)] h-auto drop-shadow-[0_6px_0_rgba(0,0,0,0.85)]"
+          viewBox="0 0 680 144"
+          className="w-[min(640px,92vw)] h-auto drop-shadow-[0_8px_0_rgba(0,0,0,0.85)]"
           aria-label="Minecraft Java Edition"
         >
           <defs>
-            <linearGradient id="mcStoneGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#d8d8d8" />
-              <stop offset="52%" stopColor="#a9a9a9" />
+            <linearGradient id="mcStoneFace" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#efefef" />
+              <stop offset="38%" stopColor="#c5c5c5" />
+              <stop offset="72%" stopColor="#949494" />
               <stop offset="100%" stopColor="#6c6c6c" />
             </linearGradient>
+            <linearGradient id="mcStoneEdge" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#525252" />
+              <stop offset="100%" stopColor="#1e1e1e" />
+            </linearGradient>
+            <pattern id="mcStoneGrain" width="16" height="16" patternUnits="userSpaceOnUse">
+              <rect width="16" height="16" fill="transparent" />
+              <rect x="2" y="3" width="3" height="3" fill="#000000" opacity="0.09" />
+              <rect x="9" y="1" width="4" height="2" fill="#ffffff" opacity="0.1" />
+              <rect x="11" y="9" width="3" height="4" fill="#000000" opacity="0.11" />
+              <rect x="3" y="11" width="4" height="2" fill="#ffffff" opacity="0.08" />
+            </pattern>
           </defs>
-          <rect x="8" y="8" width="624" height="84" fill="#1b1b1b" opacity="0.55" />
+
+          {/* 3D Extruded Stone Depth Layers */}
+          {[7, 5, 3].map((offset) => (
+            <text
+              key={offset}
+              x="340"
+              y={74 + offset}
+              textAnchor="middle"
+              fill="url(#mcStoneEdge)"
+              stroke="#141414"
+              strokeWidth="4"
+              fontFamily="Silkscreen, monospace"
+              fontWeight="700"
+              fontSize="66"
+              letterSpacing="5"
+            >
+              MINECRAFT
+            </text>
+          ))}
+
+          {/* Main Stone Block Lettering */}
           <text
-            x="320"
-            y="68"
+            x="340"
+            y="74"
             textAnchor="middle"
-            fill="#242424"
+            fill="url(#mcStoneFace)"
+            stroke="#1b1b1b"
+            strokeWidth="3.5"
             fontFamily="Silkscreen, monospace"
             fontWeight="700"
-            fontSize="60"
-            letterSpacing="4"
-            transform="translate(4,5)"
+            fontSize="66"
+            letterSpacing="5"
           >
             MINECRAFT
           </text>
+
+          {/* Subtle pixel-stone grain & weathering cracks across title */}
           <text
-            x="320"
-            y="68"
+            x="340"
+            y="74"
             textAnchor="middle"
-            fill="url(#mcStoneGrad)"
-            stroke="#1f1f1f"
-            strokeWidth="3"
+            fill="url(#mcStoneGrain)"
             fontFamily="Silkscreen, monospace"
             fontWeight="700"
-            fontSize="60"
-            letterSpacing="4"
+            fontSize="66"
+            letterSpacing="5"
           >
             MINECRAFT
           </text>
-          <text
-            x="320"
-            y="108"
-            textAnchor="middle"
-            fill="#f4f4f5"
-            stroke="#111111"
-            strokeWidth="2"
-            fontFamily="Silkscreen, monospace"
-            fontWeight="700"
-            fontSize="18"
-            letterSpacing="6"
-          >
-            JAVA EDITION
-          </text>
+          <g stroke="#292929" strokeWidth="2" fill="none" opacity="0.65">
+            <path d="M126 36 l6 9 l-4 7" />
+            <path d="M220 56 l-5 8 l3 6" />
+            <path d="M352 33 l4 10 l-6 6" />
+            <path d="M474 52 l7 7 l-3 9" />
+            <path d="M562 38 l-5 8 l4 8" />
+          </g>
+
+          {/* JAVA EDITION Stone Banner */}
+          <g transform="translate(206, 94)">
+            <rect x="0" y="0" width="268" height="28" fill="#181818" />
+            <rect x="2" y="2" width="264" height="24" fill="#3a3a3a" />
+            <rect x="2" y="2" width="264" height="2" fill="#707070" />
+            <rect x="2" y="24" width="264" height="2" fill="#1e1e1e" />
+            <text
+              x="134"
+              y="19"
+              textAnchor="middle"
+              fill="#f8fafc"
+              fontFamily="Silkscreen, monospace"
+              fontWeight="700"
+              fontSize="15"
+              letterSpacing="5"
+            >
+              JAVA EDITION
+            </text>
+          </g>
         </svg>
+
+        <div className="mc-splash text-[11px] sm:text-sm font-mc text-[#ffff55] mc-outline-shadow -mt-3 sm:-mt-4 self-end mr-2 sm:mr-8 pointer-events-none">
+          100% Java Edition!
+        </div>
       </div>
 
       {/* Central Menu Panel */}

@@ -25,7 +25,7 @@ import {
   ITEMS,
 } from '../data/itemsAndBlocks';
 import { findSmeltOutput } from '../data/recipes';
-import { buildTextureAtlas } from './textures';
+import { ATLAS_COLS, ATLAS_ROWS, buildTextureAtlas, createItemCanvasTexture, getBlockFaceTile } from './textures';
 import { CHUNK_HEIGHT, CHUNK_SIZE, VoxelHit, VoxelWorld } from './world';
 import {
   ArrowEntity,
@@ -96,10 +96,12 @@ export class MinecraftEngine {
 
   private sunLight: THREE.DirectionalLight;
   private hemiLight: THREE.HemisphereLight;
+  private heldTorchLight: THREE.PointLight;
   private sunMesh: THREE.Mesh;
   private moonMesh: THREE.Mesh;
   private starPoints: THREE.Points;
   private cloudGroup: THREE.Group;
+  private cloudMat!: THREE.MeshBasicMaterial;
   private rainPoints: THREE.Points;
 
   private atlasCanvas: HTMLCanvasElement;
@@ -169,7 +171,10 @@ export class MinecraftEngine {
   private cameraMode: 0 | 1 | 2 = 0;
   private playerModel: ReturnType<typeof createPlayerCharacterModel>;
   private viewModelGroup: THREE.Group;
-  private heldItemMesh: THREE.Mesh;
+  private heldArmGroup: THREE.Group;
+  private heldBlockMesh: THREE.Mesh;
+  private heldSpriteMesh: THREE.Mesh;
+  private heldItemTexture: THREE.CanvasTexture | null = null;
   private swingProgress = 0;
   private isSwinging = false;
   private walkBobPhase = 0;
@@ -269,8 +274,8 @@ export class MinecraftEngine {
       powerPreference: 'high-performance',
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMapping = THREE.NeutralToneMapping;
+    this.renderer.toneMappingExposure = 1.06;
     this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -279,7 +284,7 @@ export class MinecraftEngine {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x78a7ff);
-    this.scene.fog = new THREE.Fog(0x78a7ff, 28, 72);
+    this.scene.fog = new THREE.Fog(0x78a7ff, 30, 76);
 
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -291,10 +296,10 @@ export class MinecraftEngine {
     this.scene.add(this.camera);
 
     // Lighting
-    this.hemiLight = new THREE.HemisphereLight(0xd9ecff, 0x453b31, 0.85);
+    this.hemiLight = new THREE.HemisphereLight(0xd9ecff, 0x453b31, 0.9);
     this.scene.add(this.hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xfff5e0, 1.35);
+    this.sunLight = new THREE.DirectionalLight(0xfff5e0, 1.3);
     this.sunLight.castShadow = !this.isSoftwareGl;
     this.sunLight.shadow.mapSize.set(1024, 1024);
     this.sunLight.shadow.camera.left = -32;
@@ -308,14 +313,55 @@ export class MinecraftEngine {
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
+    this.heldTorchLight = new THREE.PointLight(0xffb55a, 0, 12, 1.6);
+    this.scene.add(this.heldTorchLight);
+
+    // Pixel-art Java Sun & Moon Textures
+    const makeSunTex = () => {
+      const c = document.createElement('canvas');
+      c.width = 8;
+      c.height = 8;
+      const ctx = c.getContext('2d')!;
+      ctx.fillStyle = '#fde68a';
+      ctx.fillRect(0, 0, 8, 8);
+      ctx.fillStyle = '#fffbeb';
+      ctx.fillRect(1, 1, 6, 6);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(2, 2, 4, 4);
+      const t = new THREE.CanvasTexture(c);
+      t.magFilter = THREE.NearestFilter;
+      t.minFilter = THREE.NearestFilter;
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    };
+    const makeMoonTex = () => {
+      const c = document.createElement('canvas');
+      c.width = 8;
+      c.height = 8;
+      const ctx = c.getContext('2d')!;
+      ctx.fillStyle = '#d4d8e8';
+      ctx.fillRect(0, 0, 8, 8);
+      ctx.fillStyle = '#eef2ff';
+      ctx.fillRect(1, 1, 6, 6);
+      ctx.fillStyle = '#9ca3af';
+      ctx.fillRect(2, 2, 2, 1);
+      ctx.fillRect(5, 4, 1, 2);
+      ctx.fillRect(2, 5, 1, 1);
+      const t = new THREE.CanvasTexture(c);
+      t.magFilter = THREE.NearestFilter;
+      t.minFilter = THREE.NearestFilter;
+      t.colorSpace = THREE.SRGBColorSpace;
+      return t;
+    };
+
     // Celestial objects
     this.sunMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(10, 10, 2),
-      new THREE.MeshBasicMaterial({ color: 0xfff6b3, fog: false })
+      new THREE.PlaneGeometry(14, 14),
+      new THREE.MeshBasicMaterial({ map: makeSunTex(), fog: false, side: THREE.DoubleSide })
     );
     this.moonMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(8, 8, 2),
-      new THREE.MeshBasicMaterial({ color: 0xdbe6ff, fog: false })
+      new THREE.PlaneGeometry(11, 11),
+      new THREE.MeshBasicMaterial({ map: makeMoonTex(), fog: false, side: THREE.DoubleSide })
     );
     this.scene.add(this.sunMesh, this.moonMesh);
 
@@ -333,17 +379,17 @@ export class MinecraftEngine {
     starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
     this.starPoints = new THREE.Points(
       starGeo,
-      new THREE.PointsMaterial({ color: 0xffffff, size: 1.2, transparent: true, opacity: 0, fog: false })
+      new THREE.PointsMaterial({ color: 0xffffff, size: 1.35, transparent: true, opacity: 0, fog: false })
     );
     this.scene.add(this.starPoints);
 
     // Voxel Clouds
     this.cloudGroup = new THREE.Group();
-    const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.78 });
+    this.cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 });
     for (let i = 0; i < 18; i++) {
-      const cw = 8 + Math.floor(Math.random() * 14);
-      const cd = 6 + Math.floor(Math.random() * 10);
-      const cm = new THREE.Mesh(new THREE.BoxGeometry(cw, 1.8, cd), cloudMat);
+      const cw = 10 + Math.floor(Math.random() * 14);
+      const cd = 7 + Math.floor(Math.random() * 10);
+      const cm = new THREE.Mesh(new THREE.BoxGeometry(cw, 1.5, cd), this.cloudMat);
       cm.position.set((Math.random() - 0.5) * 180, 56, (Math.random() - 0.5) * 180);
       this.cloudGroup.add(cm);
     }
@@ -377,7 +423,7 @@ export class MinecraftEngine {
     const wireGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.006, 1.006, 1.006));
     this.selectionWireframe = new THREE.LineSegments(
       wireGeo,
-      new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.75 })
+      new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.8 })
     );
     this.selectionWireframe.visible = false;
     this.scene.add(this.selectionWireframe);
@@ -395,15 +441,44 @@ export class MinecraftEngine {
     this.crackOverlay.visible = false;
     this.scene.add(this.crackOverlay);
 
-    // First-person held hand / item viewmodel attached to camera
+    // First-person held Steve arm + 3D textured voxel block + pixel-art held item viewmodel
     this.viewModelGroup = new THREE.Group();
-    this.heldItemMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.18, 0.18, 0.52),
+
+    this.heldArmGroup = new THREE.Group();
+    const armSkin = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.18, 0.44),
       new THREE.MeshStandardMaterial({ color: 0xd9a788, roughness: 0.85 })
     );
-    this.heldItemMesh.position.set(0.42, -0.34, -0.55);
-    this.heldItemMesh.rotation.set(0.25, -0.35, 0.15);
-    this.viewModelGroup.add(this.heldItemMesh);
+    const armSleeve = new THREE.Mesh(
+      new THREE.BoxGeometry(0.19, 0.19, 0.16),
+      new THREE.MeshStandardMaterial({ color: 0x1aa3a8, roughness: 0.85 })
+    );
+    armSleeve.position.set(0, 0, 0.22);
+    this.heldArmGroup.add(armSkin, armSleeve);
+    this.heldArmGroup.position.set(0.44, -0.36, -0.52);
+    this.heldArmGroup.rotation.set(0.28, -0.38, 0.18);
+
+    this.heldBlockMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.28, 0.28, 0.28),
+      new THREE.MeshLambertMaterial({ map: this.atlasTexture })
+    );
+    this.heldBlockMesh.position.set(0.42, -0.34, -0.58);
+    this.heldBlockMesh.rotation.set(0.18, 0.65, 0.08);
+    this.heldBlockMesh.visible = false;
+
+    this.heldSpriteMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.36, 0.36),
+      new THREE.MeshBasicMaterial({
+        transparent: true,
+        alphaTest: 0.4,
+        side: THREE.DoubleSide,
+      })
+    );
+    this.heldSpriteMesh.position.set(0.42, -0.28, -0.55);
+    this.heldSpriteMesh.rotation.set(0.1, -0.45, 0.12);
+    this.heldSpriteMesh.visible = false;
+
+    this.viewModelGroup.add(this.heldArmGroup, this.heldBlockMesh, this.heldSpriteMesh);
     this.camera.add(this.viewModelGroup);
 
     // 3rd-person player model
@@ -1198,6 +1273,7 @@ export class MinecraftEngine {
     this.clearEntities();
     this.world.dispose();
     this.atlasTexture.dispose();
+    this.heldItemTexture?.dispose();
     this.crackTextures.forEach((t) => t.dispose());
     this.particleGeo.dispose();
     this.renderer.dispose();
@@ -1223,30 +1299,87 @@ export class MinecraftEngine {
 
   private updateHeldItemAppearance() {
     const slot = this.hotbar[this.selectedHotbar];
-    const mat = this.heldItemMesh.material as THREE.MeshStandardMaterial;
+    if (this.heldItemTexture) {
+      this.heldItemTexture.dispose();
+      this.heldItemTexture = null;
+    }
+
     if (!slot) {
-      this.heldItemMesh.scale.set(1, 1, 1);
-      mat.color.setHex(0xd9a788);
-    } else if (slot.id.startsWith('block:')) {
-      this.heldItemMesh.scale.set(1.3, 1.3, 0.55);
+      this.heldArmGroup.visible = true;
+      this.heldBlockMesh.visible = false;
+      this.heldSpriteMesh.visible = false;
+      return;
+    }
+
+    const flatBlockItem =
+      slot.id === BLOCK_ITEM(BlockId.Torch) ||
+      slot.id === BLOCK_ITEM(BlockId.TallGrass) ||
+      slot.id === BLOCK_ITEM(BlockId.Dandelion) ||
+      slot.id === BLOCK_ITEM(BlockId.Poppy) ||
+      slot.id === BLOCK_ITEM(BlockId.Ladder) ||
+      slot.id === BLOCK_ITEM(BlockId.OakSapling) ||
+      slot.id === BLOCK_ITEM(BlockId.OakDoorClosed);
+
+    if (slot.id.startsWith('block:') && !flatBlockItem) {
       const bId = Number(slot.id.slice(6)) as BlockId;
-      if (bId === BlockId.GrassBlock || bId === BlockId.OakLeaves) mat.color.setHex(0x559e3c);
-      else if (bId === BlockId.Stone || bId === BlockId.Cobblestone) mat.color.setHex(0x888888);
-      else if (bId === BlockId.Torch) mat.color.setHex(0xffb833);
-      else if (bId === BlockId.Tnt) mat.color.setHex(0xd13426);
-      else mat.color.setHex(0x9e7b49);
-    } else if (slot.id.includes('diamond')) {
-      this.heldItemMesh.scale.set(0.45, 0.45, 1.15);
-      mat.color.setHex(0x4eece8);
-    } else if (slot.id.includes('iron')) {
-      this.heldItemMesh.scale.set(0.45, 0.45, 1.15);
-      mat.color.setHex(0xd8d8d8);
-    } else if (slot.id.includes('stone')) {
-      this.heldItemMesh.scale.set(0.45, 0.45, 1.15);
-      mat.color.setHex(0x888888);
+      const faces: ('px' | 'nx' | 'py' | 'ny' | 'pz' | 'nz')[] = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
+      const uvAttr = this.heldBlockMesh.geometry.attributes.uv as THREE.BufferAttribute;
+      const uStep = 1 / ATLAS_COLS;
+      const vStep = 1 / ATLAS_ROWS;
+
+      for (let f = 0; f < 6; f++) {
+        const tile = getBlockFaceTile(bId, faces[f]);
+        const colIdx = tile % ATLAS_COLS;
+        const rowIdx = Math.floor(tile / ATLAS_COLS);
+        const u0 = colIdx * uStep + 0.002;
+        const u1 = (colIdx + 1) * uStep - 0.002;
+        const v1 = 1 - rowIdx * vStep - 0.002;
+        const v0 = 1 - (rowIdx + 1) * vStep + 0.002;
+        const base = f * 4;
+        uvAttr.setXY(base, u0, v1);
+        uvAttr.setXY(base + 1, u1, v1);
+        uvAttr.setXY(base + 2, u0, v0);
+        uvAttr.setXY(base + 3, u1, v0);
+      }
+      uvAttr.needsUpdate = true;
+
+      this.heldArmGroup.visible = false;
+      this.heldBlockMesh.visible = true;
+      this.heldSpriteMesh.visible = false;
     } else {
-      this.heldItemMesh.scale.set(0.45, 0.45, 1.05);
-      mat.color.setHex(0x9e7b49);
+      const tex = flatBlockItem ? null : createItemCanvasTexture(slot.id, this.atlasCanvas);
+      const mat = this.heldSpriteMesh.material as THREE.MeshBasicMaterial;
+      const uvAttr = this.heldSpriteMesh.geometry.attributes.uv as THREE.BufferAttribute;
+      if (tex) {
+        this.heldItemTexture = tex;
+        mat.map = tex;
+        uvAttr.setXY(0, 0, 1);
+        uvAttr.setXY(1, 1, 1);
+        uvAttr.setXY(2, 0, 0);
+        uvAttr.setXY(3, 1, 0);
+      } else {
+        const bId = Number(slot.id.slice(6)) as BlockId;
+        const tile = getBlockFaceTile(bId, 'pz');
+        const colIdx = tile % ATLAS_COLS;
+        const rowIdx = Math.floor(tile / ATLAS_COLS);
+        const uStep = 1 / ATLAS_COLS;
+        const vStep = 1 / ATLAS_ROWS;
+        const u0 = colIdx * uStep + 0.002;
+        const u1 = (colIdx + 1) * uStep - 0.002;
+        const v1 = 1 - rowIdx * vStep - 0.002;
+        const v0 = 1 - (rowIdx + 1) * vStep + 0.002;
+        mat.map = this.atlasTexture;
+        uvAttr.setXY(0, u0, v1);
+        uvAttr.setXY(1, u1, v1);
+        uvAttr.setXY(2, u0, v0);
+        uvAttr.setXY(3, u1, v0);
+      }
+      uvAttr.needsUpdate = true;
+      mat.needsUpdate = true;
+
+      this.heldArmGroup.visible = false;
+      this.heldBlockMesh.visible = false;
+      this.heldSpriteMesh.visible = true;
     }
   }
 
@@ -2699,10 +2832,23 @@ export class MinecraftEngine {
     }
 
     const rainDim = this.weather === 'rain' ? 0.65 : 1.0;
-    this.sunLight.intensity = (0.18 + daylight * 1.25) * rainDim;
-    this.hemiLight.intensity = (0.28 + daylight * 0.62) * rainDim;
+    this.sunLight.intensity = (0.16 + daylight * 1.25) * rainDim;
+    this.hemiLight.intensity = (0.24 + daylight * 0.68) * rainDim;
     (this.starPoints.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - daylight * 1.6);
     this.starPoints.position.copy(anchor);
+
+    // Dynamic cloud tint matching Java Edition sky phases
+    this.cloudMat.color.setHex(0x232b3d).lerp(new THREE.Color(0xffffff), daylight);
+    if (sunsetBand > 0.05) this.cloudMat.color.lerp(new THREE.Color(0xffb088), sunsetBand * 0.6);
+
+    // Dynamic handheld light when holding Torch, Glowstone, or Lava Bucket
+    const heldId = this.hotbar[this.selectedHotbar]?.id;
+    const emitsHeldLight =
+      heldId === BLOCK_ITEM(BlockId.Torch) ||
+      heldId === BLOCK_ITEM(BlockId.Glowstone) ||
+      heldId === 'lava_bucket';
+    this.heldTorchLight.position.set(this.playerPos.x, this.playerPos.y + 1.5, this.playerPos.z);
+    this.heldTorchLight.intensity = emitsHeldLight && this.phase === 'playing' ? 2.4 : 0;
 
     // Drift clouds gently
     this.cloudGroup.children.forEach((c) => {

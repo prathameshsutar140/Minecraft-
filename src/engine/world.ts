@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { BlockId, BiomeType } from '../types/game';
 import { BLOCKS } from '../data/itemsAndBlocks';
 import { SeededNoise } from './noise';
-import { ATLAS_COLS, ATLAS_ROWS, FaceDir, getBlockFaceTile } from './textures';
+import { ATLAS_COLS, ATLAS_ROWS, FaceDir, Tile, getBlockFaceTile } from './textures';
 
 export const CHUNK_SIZE = 16;
 export const CHUNK_HEIGHT = 64;
@@ -39,7 +39,7 @@ const FACE_DEFS: {
   {
     dir: 'px',
     normal: [1, 0, 0],
-    shade: 0.82,
+    shade: 0.78,
     corners: [
       [1, 0, 1],
       [1, 0, 0],
@@ -56,7 +56,7 @@ const FACE_DEFS: {
   {
     dir: 'nx',
     normal: [-1, 0, 0],
-    shade: 0.82,
+    shade: 0.78,
     corners: [
       [0, 0, 0],
       [0, 0, 1],
@@ -90,7 +90,7 @@ const FACE_DEFS: {
   {
     dir: 'ny',
     normal: [0, -1, 0],
-    shade: 0.56,
+    shade: 0.52,
     corners: [
       [0, 0, 0],
       [1, 0, 0],
@@ -534,30 +534,26 @@ export class VoxelWorld {
     return b !== BlockId.Air && !BLOCKS[b].transparent && BLOCKS[b].solid;
   }
 
-  private getSkyColumnClear(wx: number, wy: number, wz: number): number {
-    // Fast vertical sky check + nearby emissive torch/lava check
-    let sky = 1.0;
-    for (let y = wy + 1; y < Math.min(CHUNK_HEIGHT, wy + 14); y++) {
+  private getSkyExposure(wx: number, wy: number, wz: number): number {
+    for (let y = wy + 1; y < Math.min(CHUNK_HEIGHT, wy + 16); y++) {
       const b = this.getBlock(wx, y, wz);
       if (b !== BlockId.Air && !BLOCKS[b].transparent) {
-        sky = 0.34;
-        break;
+        return 0.28;
       }
     }
-    // Check immediate 3x3x3 neighborhood for light-emitting blocks
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
-        for (let dz = -2; dz <= 2; dz++) {
-          const nb = this.getBlock(wx + dx, wy + dy, wz + dz);
-          if (BLOCKS[nb].lightLevel > 0) {
-            const dist = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
-            const boost = Math.max(0, 1 - dist / 5) * (BLOCKS[nb].lightLevel / 15);
-            sky = Math.max(sky, boost);
-          }
-        }
-      }
-    }
-    return sky;
+    return 1.0;
+  }
+
+  private getSkyColumnClear(wx: number, wy: number, wz: number): number {
+    // Smooth sky light across direct column and cardinal neighbors for soft cave-mouth falloff
+    const center = this.getSkyExposure(wx, wy, wz);
+    if (center >= 1.0) return 1.0;
+    let sum = center * 2;
+    sum += this.getSkyExposure(wx + 1, wy, wz);
+    sum += this.getSkyExposure(wx - 1, wy, wz);
+    sum += this.getSkyExposure(wx, wy, wz + 1);
+    sum += this.getSkyExposure(wx, wy, wz - 1);
+    return Math.max(0.24, sum / 6);
   }
 
   private rebuildChunkGeometry(ch: ChunkData) {
@@ -586,6 +582,49 @@ export class VoxelWorld {
     const uStep = 1 / ATLAS_COLS;
     const vStep = 1 / ATLAS_ROWS;
 
+    // Collect local light emitters in the 3x3 chunk neighborhood for fast warm torch/lava flood lighting
+    const lightEmitters: { x: number; y: number; z: number; power: number }[] = [];
+    for (let dcx = -1; dcx <= 1; dcx++) {
+      for (let dcz = -1; dcz <= 1; dcz++) {
+        const nch = this.chunks.get(chunkKey(ch.cx + dcx, ch.cz + dcz));
+        if (!nch) continue;
+        const nBaseX = nch.cx * CHUNK_SIZE;
+        const nBaseZ = nch.cz * CHUNK_SIZE;
+        for (let ey = 0; ey < CHUNK_HEIGHT; ey++) {
+          for (let elz = 0; elz < CHUNK_SIZE; elz++) {
+            for (let elx = 0; elx < CHUNK_SIZE; elx++) {
+              const eb = nch.blocks[elx + elz * CHUNK_SIZE + ey * CHUNK_SIZE * CHUNK_SIZE] as BlockId;
+              if (eb !== BlockId.Air && BLOCKS[eb].lightLevel > 0) {
+                lightEmitters.push({
+                  x: nBaseX + elx,
+                  y: ey,
+                  z: nBaseZ + elz,
+                  power: BLOCKS[eb].lightLevel / 15,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const sampleLightRGB = (wx: number, wy: number, wz: number): [number, number, number] => {
+      const sky = this.getSkyColumnClear(wx, wy, wz);
+      let blockLight = 0;
+      for (let i = 0; i < lightEmitters.length; i++) {
+        const em = lightEmitters[i];
+        const dist = Math.abs(wx - em.x) + Math.abs(wy - em.y) + Math.abs(wz - em.z);
+        if (dist < 8) {
+          const atten = (1 - dist / 8) * em.power;
+          if (atten > blockLight) blockLight = atten;
+        }
+      }
+      const r = Math.min(1.15, Math.max(sky, blockLight * 1.15));
+      const g = Math.min(1.08, Math.max(sky, blockLight * 0.94));
+      const b = Math.min(1.0, Math.max(sky, blockLight * 0.64));
+      return [r, g, b];
+    };
+
     const pushTileQuad = (
       pos: number[],
       norm: number[],
@@ -599,7 +638,7 @@ export class VoxelWorld {
       n: [number, number, number],
       tile: number,
       ao: [number, number, number, number],
-      light: number
+      rgb: [number, number, number]
     ) => {
       const baseVertex = pos.length / 3;
       const colIdx = tile % ATLAS_COLS;
@@ -621,15 +660,39 @@ export class VoxelWorld {
         pos.push(verts[i][0], verts[i][1], verts[i][2]);
         norm.push(n[0], n[1], n[2]);
         uv.push(uvs[i][0], uvs[i][1]);
-        const c = ao[i] * light;
-        col.push(c, c, c);
+        col.push(ao[i] * rgb[0], ao[i] * rgb[1], ao[i] * rgb[2]);
       }
 
-      // Flip diagonal if needed to avoid AO interpolation artifacts
       if (ao[0] + ao[2] > ao[1] + ao[3]) {
         idx.push(baseVertex, baseVertex + 1, baseVertex + 2, baseVertex, baseVertex + 2, baseVertex + 3);
       } else {
         idx.push(baseVertex + 1, baseVertex + 2, baseVertex + 3, baseVertex + 1, baseVertex + 3, baseVertex);
+      }
+    };
+
+    const pushBoxCustom = (
+      pos: number[],
+      norm: number[],
+      uv: number[],
+      col: number[],
+      idx: number[],
+      minX: number,
+      minY: number,
+      minZ: number,
+      maxX: number,
+      maxY: number,
+      maxZ: number,
+      tile: number,
+      rgb: [number, number, number]
+    ) => {
+      for (const face of FACE_DEFS) {
+        const ao: [number, number, number, number] = [face.shade, face.shade, face.shade, face.shade];
+        const verts = face.corners.map(([vx, vy, vz]) => [
+          vx === 0 ? minX : maxX,
+          vy === 0 ? minY : maxY,
+          vz === 0 ? minZ : maxZ,
+        ]) as [[number, number, number], [number, number, number], [number, number, number], [number, number, number]];
+        pushTileQuad(pos, norm, uv, col, idx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, rgb);
       }
     };
 
@@ -642,36 +705,38 @@ export class VoxelWorld {
           const wx = baseX + lx;
           const wz = baseZ + lz;
 
-          // Cross plants (TallGrass, Dandelion, Poppy)
+          // Cross plants (TallGrass, Dandelion, Poppy, Wheat, Sapling)
           if (def.crossPlant) {
             const tile = getBlockFaceTile(bId, 'pz');
-            const light = this.getSkyColumnClear(wx, y, wz);
-            const ao: [number, number, number, number] = [0.9, 0.9, 1.0, 1.0];
+            const rgb = sampleLightRGB(wx, y, wz);
+            const ao: [number, number, number, number] = [0.88, 0.88, 1.0, 1.0];
             pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx,
               [lx + 0.15, y, lz + 0.15], [lx + 0.85, y, lz + 0.85], [lx + 0.85, y + 0.9, lz + 0.85], [lx + 0.15, y + 0.9, lz + 0.15],
-              [0, 1, 0], tile, ao, light);
+              [0, 1, 0], tile, ao, rgb);
             pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx,
               [lx + 0.85, y, lz + 0.15], [lx + 0.15, y, lz + 0.85], [lx + 0.15, y + 0.9, lz + 0.85], [lx + 0.85, y + 0.9, lz + 0.15],
-              [0, 1, 0], tile, ao, light);
+              [0, 1, 0], tile, ao, rgb);
             continue;
           }
 
-          // Torch geometry
+          // 3D Torch geometry (stick + glowing flame top)
           if (def.torchLike) {
             const tile = getBlockFaceTile(bId, 'pz');
             const ao: [number, number, number, number] = [1, 1, 1, 1];
+            const bright: [number, number, number] = [1.2, 1.12, 0.9];
+            pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx + 0.43, y, lz + 0.43, lx + 0.57, y + 0.68, lz + 0.57, Tile.OakLogSide, [1.0, 0.95, 0.85]);
             pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx,
-              [lx + 0.43, y, lz + 0.43], [lx + 0.57, y, lz + 0.57], [lx + 0.57, y + 0.72, lz + 0.57], [lx + 0.43, y + 0.72, lz + 0.43],
-              [0, 1, 0], tile, ao, 1.0);
+              [lx + 0.42, y + 0.15, lz + 0.42], [lx + 0.58, y + 0.15, lz + 0.58], [lx + 0.58, y + 0.82, lz + 0.58], [lx + 0.42, y + 0.82, lz + 0.42],
+              [0, 1, 0], tile, ao, bright);
             pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx,
-              [lx + 0.57, y, lz + 0.43], [lx + 0.43, y, lz + 0.57], [lx + 0.43, y + 0.72, lz + 0.57], [lx + 0.57, y + 0.72, lz + 0.43],
-              [0, 1, 0], tile, ao, 1.0);
+              [lx + 0.58, y + 0.15, lz + 0.42], [lx + 0.42, y + 0.15, lz + 0.58], [lx + 0.42, y + 0.82, lz + 0.58], [lx + 0.58, y + 0.82, lz + 0.42],
+              [0, 1, 0], tile, ao, bright);
             continue;
           }
 
           // Half-slab geometry (Bed, Enchanting Table)
           if (def.halfSlab) {
-            const light = this.getSkyColumnClear(wx, y, wz);
+            const rgb = sampleLightRGB(wx, y, wz);
             const hTop = bId === BlockId.Bed ? 0.56 : 0.75;
             for (const face of FACE_DEFS) {
               const tile = getBlockFaceTile(bId, face.dir);
@@ -681,40 +746,52 @@ export class VoxelWorld {
                 y + (vy === 1 ? hTop : 0),
                 lz + vz,
               ]) as [[number, number, number], [number, number, number], [number, number, number], [number, number, number]];
-              pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, light);
+              pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, rgb);
             }
             continue;
           }
 
-          // Fence Post geometry
+          // Fence Post + Connected Horizontal Rails (like Screenshot 2!)
           if (def.fenceLike) {
-            const light = this.getSkyColumnClear(wx, y, wz);
+            const rgb = sampleLightRGB(wx, y, wz);
             const tile = getBlockFaceTile(bId, 'pz');
-            for (const face of FACE_DEFS) {
-              const ao: [number, number, number, number] = [face.shade, face.shade, face.shade, face.shade];
-              const verts = face.corners.map(([vx, vy, vz]) => [
-                lx + (vx === 0 ? 0.36 : 0.64),
-                y + vy,
-                lz + (vz === 0 ? 0.36 : 0.64),
-              ]) as [[number, number, number], [number, number, number], [number, number, number], [number, number, number]];
-              pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, light);
+            pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx + 0.375, y, lz + 0.375, lx + 0.625, y + 1.0, lz + 0.625, tile, rgb);
+            const connects = (nx: number, nz: number) => {
+              const nb = this.getBlock(nx, y, nz);
+              return nb === bId || (BLOCKS[nb].solid && !BLOCKS[nb].transparent);
+            };
+            if (connects(wx + 1, wz)) {
+              pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx + 0.625, y + 0.375, lz + 0.44, lx + 1.0, y + 0.56, lz + 0.56, tile, rgb);
+              pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx + 0.625, y + 0.75, lz + 0.44, lx + 1.0, y + 0.935, lz + 0.56, tile, rgb);
+            }
+            if (connects(wx - 1, wz)) {
+              pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx, y + 0.375, lz + 0.44, lx + 0.375, y + 0.56, lz + 0.56, tile, rgb);
+              pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx, y + 0.75, lz + 0.44, lx + 0.375, y + 0.935, lz + 0.56, tile, rgb);
+            }
+            if (connects(wx, wz + 1)) {
+              pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx + 0.44, y + 0.375, lz + 0.625, lx + 0.56, y + 0.56, lz + 1.0, tile, rgb);
+              pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx + 0.44, y + 0.75, lz + 0.625, lx + 0.56, y + 0.935, lz + 1.0, tile, rgb);
+            }
+            if (connects(wx, wz - 1)) {
+              pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx + 0.44, y + 0.375, lz, lx + 0.56, y + 0.56, lz + 0.375, tile, rgb);
+              pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx + 0.44, y + 0.75, lz, lx + 0.56, y + 0.935, lz + 0.375, tile, rgb);
             }
             continue;
           }
 
           // Door geometry (Closed or Open)
           if (bId === BlockId.OakDoorClosed || bId === BlockId.OakDoorOpen) {
-            const light = this.getSkyColumnClear(wx, y, wz);
+            const rgb = sampleLightRGB(wx, y, wz);
             const tile = getBlockFaceTile(bId, 'pz');
             const isOpen = bId === BlockId.OakDoorOpen;
             for (const face of FACE_DEFS) {
               const ao: [number, number, number, number] = [face.shade, face.shade, face.shade, face.shade];
               const verts = face.corners.map(([vx, vy, vz]) => [
-                lx + (isOpen ? (vx === 0 ? 0.0 : 0.22) : vx),
+                lx + (isOpen ? (vx === 0 ? 0.0 : 0.2) : vx),
                 y + vy,
                 lz + (isOpen ? vz : (vz === 0 ? 0.4 : 0.6)),
               ]) as [[number, number, number], [number, number, number], [number, number, number], [number, number, number]];
-              pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, light);
+              pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, rgb);
             }
             continue;
           }
@@ -737,30 +814,37 @@ export class VoxelWorld {
             }
 
             const tile = getBlockFaceTile(bId, face.dir);
-            const light = bId === BlockId.Lava || bId === BlockId.Glowstone ? 1.0 : this.getSkyColumnClear(nx, ny, nz);
+            const rgb: [number, number, number] =
+              bId === BlockId.Lava || bId === BlockId.Glowstone
+                ? [1.18, 1.05, 0.85]
+                : sampleLightRGB(nx, ny, nz);
 
-            // Compute simple vertex AO for opaque faces
+            // Smooth Java Edition 4-level vertex AO for opaque faces
             const ao: [number, number, number, number] = [1, 1, 1, 1];
             if (!def.liquid && !def.transparent) {
               for (let c = 0; c < 4; c++) {
                 const cx = face.corners[c][0] === 1 ? 1 : -1;
                 const cy = face.corners[c][1] === 1 ? 1 : -1;
                 const cz = face.corners[c][2] === 1 ? 1 : -1;
-                let occ = 0;
+                let side1 = false;
+                let side2 = false;
+                let corner = false;
                 if (face.normal[1] !== 0) {
-                  if (this.isSolidForAO(wx + cx, ny, wz)) occ++;
-                  if (this.isSolidForAO(wx, ny, wz + cz)) occ++;
-                  if (this.isSolidForAO(wx + cx, ny, wz + cz)) occ++;
+                  side1 = this.isSolidForAO(wx + cx, ny, wz);
+                  side2 = this.isSolidForAO(wx, ny, wz + cz);
+                  corner = this.isSolidForAO(wx + cx, ny, wz + cz);
                 } else if (face.normal[0] !== 0) {
-                  if (this.isSolidForAO(nx, y + cy, wz)) occ++;
-                  if (this.isSolidForAO(nx, y, wz + cz)) occ++;
-                  if (this.isSolidForAO(nx, y + cy, wz + cz)) occ++;
+                  side1 = this.isSolidForAO(nx, y + cy, wz);
+                  side2 = this.isSolidForAO(nx, y, wz + cz);
+                  corner = this.isSolidForAO(nx, y + cy, wz + cz);
                 } else {
-                  if (this.isSolidForAO(wx + cx, y, nz)) occ++;
-                  if (this.isSolidForAO(wx, y + cy, nz)) occ++;
-                  if (this.isSolidForAO(wx + cx, y + cy, nz)) occ++;
+                  side1 = this.isSolidForAO(wx + cx, y, nz);
+                  side2 = this.isSolidForAO(wx, y + cy, nz);
+                  corner = this.isSolidForAO(wx + cx, y + cy, nz);
                 }
-                ao[c] = (1 - occ * 0.16) * face.shade;
+                const occ = side1 && side2 ? 3 : (side1 ? 1 : 0) + (side2 ? 1 : 0) + (corner ? 1 : 0);
+                const aoCurve = occ === 0 ? 1.0 : occ === 1 ? 0.82 : occ === 2 ? 0.65 : 0.48;
+                ao[c] = aoCurve * face.shade;
               }
             } else {
               for (let c = 0; c < 4; c++) ao[c] = face.shade;
@@ -779,11 +863,11 @@ export class VoxelWorld {
             ];
 
             if (def.liquid) {
-              pushTileQuad(liqPos, liqNorm, liqUv, liqCol, liqIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, light);
+              pushTileQuad(liqPos, liqNorm, liqUv, liqCol, liqIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, rgb);
             } else if (def.transparent) {
-              pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, light);
+              pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, rgb);
             } else {
-              pushTileQuad(opPos, opNorm, opUv, opCol, opIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, light);
+              pushTileQuad(opPos, opNorm, opUv, opCol, opIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, rgb);
             }
           }
         }

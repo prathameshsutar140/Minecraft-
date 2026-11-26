@@ -205,12 +205,12 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
         />
       )}
 
-      {/* Center Crosshair */}
+      {/* Center Crosshair (Java Edition mix-blend-difference) */}
       {hud.activeContainer === 'none' && !chatOpen && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <svg viewBox="0 0 18 18" className="w-[18px] h-[18px] opacity-90">
-            <rect x="8" y="2" width="2" height="14" fill="#ffffff" />
-            <rect x="2" y="8" width="14" height="2" fill="#ffffff" />
+        <div className="absolute inset-0 flex items-center justify-center mix-blend-difference">
+          <svg viewBox="0 0 16 16" className="w-[18px] h-[18px]">
+            <rect x="7" y="1" width="2" height="14" fill="#ffffff" />
+            <rect x="1" y="7" width="14" height="2" fill="#ffffff" />
           </svg>
         </div>
       )}
@@ -419,7 +419,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             }}
           />
 
-          {/* Bottom-Left Touch D-Pad */}
+          {/* Bottom-Left Touch D-Pad (Java UI Stone-Beveled Style) */}
           <div className="absolute left-3 bottom-24 sm:bottom-20 grid grid-cols-3 gap-1.5 pointer-events-auto touch-none z-20">
             <div />
             <button
@@ -428,10 +428,8 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
               onPointerUp={stopDpad}
               onPointerCancel={stopDpad}
               onLostPointerCapture={stopDpad}
-              className={`w-12 h-12 border-2 text-white text-sm font-bold flex items-center justify-center touch-none ${
-                activeDpad === 'fwd'
-                  ? 'bg-white/35 border-white'
-                  : 'bg-black/55 border-white/35'
+              className={`w-12 h-12 text-sm font-bold flex items-center justify-center touch-none ${
+                activeDpad === 'fwd' ? 'mc-touch-btn-active' : 'mc-touch-btn'
               }`}
               aria-label="Move Forward"
             >
@@ -444,10 +442,8 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
               onPointerUp={stopDpad}
               onPointerCancel={stopDpad}
               onLostPointerCapture={stopDpad}
-              className={`w-12 h-12 border-2 text-white text-sm font-bold flex items-center justify-center touch-none ${
-                activeDpad === 'left'
-                  ? 'bg-white/35 border-white'
-                  : 'bg-black/55 border-white/35'
+              className={`w-12 h-12 text-sm font-bold flex items-center justify-center touch-none ${
+                activeDpad === 'left' ? 'mc-touch-btn-active' : 'mc-touch-btn'
               }`}
               aria-label="Strafe Left"
             >
@@ -459,10 +455,8 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                 e.currentTarget.blur();
                 onToggleSprint();
               }}
-              className={`w-12 h-12 border-2 text-[10px] font-bold flex items-center justify-center touch-none ${
-                hud.isSprinting
-                  ? 'bg-[#4c6b22]/85 border-[#80ff20] text-white'
-                  : 'bg-black/55 border-white/35 text-white/80'
+              className={`w-12 h-12 text-[10px] font-bold flex items-center justify-center touch-none ${
+                hud.isSprinting ? 'mc-touch-btn-active' : 'mc-touch-btn'
               }`}
               title="Toggle Sprint"
             >
@@ -474,10 +468,8 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
               onPointerUp={stopDpad}
               onPointerCancel={stopDpad}
               onLostPointerCapture={stopDpad}
-              className={`w-12 h-12 border-2 text-white text-sm font-bold flex items-center justify-center touch-none ${
-                activeDpad === 'right'
-                  ? 'bg-white/35 border-white'
-                  : 'bg-black/55 border-white/35'
+              className={`w-12 h-12 text-sm font-bold flex items-center justify-center touch-none ${
+                activeDpad === 'right' ? 'mc-touch-btn-active' : 'mc-touch-btn'
               }`}
               aria-label="Strafe Right"
             >
@@ -490,10 +482,8 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
               onPointerUp={stopDpad}
               onPointerCancel={stopDpad}
               onLostPointerCapture={stopDpad}
-              className={`w-12 h-12 border-2 text-white text-sm font-bold flex items-center justify-center touch-none ${
-                activeDpad === 'back'
-                  ? 'bg-white/35 border-white'
-                  : 'bg-black/55 border-white/35'
+              className={`w-12 h-12 text-sm font-bold flex items-center justify-center touch-none ${
+                activeDpad === 'back' ? 'mc-touch-btn-active' : 'mc-touch-btn'
               }`}
               aria-label="Move Backward"
             >
@@ -502,9 +492,9 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             <div />
           </div>
 
-          {/* Bottom-Right Touch Action Buttons */}
-          <div className="absolute right-3 bottom-24 sm:bottom-20 flex flex-col items-end gap-2 pointer-events-auto touch-none z-20">
-            <div className="flex gap-2">
+          {/* Bottom-Right Touch Action Buttons (Java UI Stone-Beveled Style) */}
+          <div className="absolute right-3 bottom-24 sm:bottom-20 flex flex-col items-end gap-1.5 pointer-events-auto touch-none z-20">
+            <div className="flex gap-1.5">
               <button
                 type="button"
                 onPointerDown={(e) => {
@@ -531,9 +521,9 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   minePointerRef.current = null;
                   onTouchAction('mine', false);
                 }}
-                className="w-14 h-14 bg-[#b91c1c]/70 active:bg-[#ef4444]/85 border-2 border-white/40 text-white text-[11px] font-bold flex items-center justify-center touch-none"
+                className="mc-touch-btn active:bg-[#b91c1c]/80 w-14 h-12 text-[10px] font-bold flex items-center justify-center touch-none"
               >
-                MINE
+                ATK
               </button>
               <button
                 type="button"
@@ -541,22 +531,20 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   e.preventDefault();
                   onTouchPlaceOrUse();
                 }}
-                className="w-14 h-14 bg-[#1d4ed8]/70 active:bg-[#3b82f6]/85 border-2 border-white/40 text-white text-[11px] font-bold flex items-center justify-center touch-none"
+                className="mc-touch-btn active:bg-[#2563eb]/80 w-14 h-12 text-[10px] font-bold flex items-center justify-center touch-none"
               >
                 USE
               </button>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-1.5">
               <button
                 type="button"
                 onClick={(e) => {
                   e.currentTarget.blur();
                   onToggleSneak();
                 }}
-                className={`w-14 h-12 border-2 text-[10px] font-bold flex items-center justify-center touch-none ${
-                  hud.isSneaking
-                    ? 'bg-[#ca8a04]/80 border-[#fde047] text-white'
-                    : 'bg-black/55 border-white/35 text-white'
+                className={`w-14 h-12 text-[10px] font-bold flex items-center justify-center touch-none ${
+                  hud.isSneaking ? 'mc-touch-btn-active' : 'mc-touch-btn'
                 }`}
               >
                 SNEAK
@@ -587,7 +575,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   jumpPointerRef.current = null;
                   onTouchAction('jump', false);
                 }}
-                className="w-14 h-12 bg-black/60 active:bg-white/30 border-2 border-white/40 text-white text-[11px] font-bold flex items-center justify-center touch-none"
+                className="mc-touch-btn active:bg-white/35 w-14 h-12 text-[10px] font-bold flex items-center justify-center touch-none"
               >
                 JUMP
               </button>
@@ -596,104 +584,121 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
         </>
       )}
 
-      {/* Bottom Center Survival Vitals + Hotbar */}
+      {/* Bottom Center Java Edition Survival Vitals + Hotbar */}
       <div className="absolute bottom-2 sm:bottom-3 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 max-w-[98vw]">
         {heldToast && (
-          <div className="text-xs text-white mc-text-shadow mb-0.5">{heldToast}</div>
+          <div className="bg-black/65 px-2.5 py-0.5 text-[11px] sm:text-xs text-white mc-text-shadow mb-0.5">
+            {heldToast}
+          </div>
         )}
 
-        {hud.gameMode === 'survival' && (
-          <div className="w-[332px] sm:w-[412px] max-w-[94vw] flex flex-col gap-1 px-0.5">
-            {/* Top row: Armor (left) & Air Bubbles (right) */}
-            {(hud.armor > 0 || hud.isUnderwater) && (
-              <div className="flex justify-between items-center">
-                <div className="flex gap-0.5">
-                  {hud.armor > 0 &&
-                    Array.from({ length: 10 }).map((_, i) => {
-                      const val = hud.armor - i * 2;
+        <div className="flex items-end gap-1.5">
+          <div className="flex flex-col items-center gap-1">
+            {hud.gameMode === 'survival' && (
+              <div className="w-full flex flex-col gap-1 px-0.5">
+                {/* Top row: Armor (left) & Air Bubbles (right) */}
+                {(hud.armor > 0 || hud.isUnderwater) && (
+                  <div className="flex justify-between items-center">
+                    <div className="flex gap-0.5">
+                      {hud.armor > 0 &&
+                        Array.from({ length: 10 }).map((_, i) => {
+                          const val = hud.armor - i * 2;
+                          return (
+                            <ArmorIcon
+                              key={i}
+                              state={val >= 2 ? 'full' : val === 1 ? 'half' : 'empty'}
+                            />
+                          );
+                        })}
+                    </div>
+                    <div className="flex gap-0.5">
+                      {hud.isUnderwater &&
+                        Array.from({ length: 10 }).map((_, i) => {
+                          const filled = hud.air >= (i + 1) * 2;
+                          return (
+                            <span
+                              key={i}
+                              className={`w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full border border-[#1d4ed8] ${
+                                filled ? 'bg-[#60a5fa]' : 'bg-transparent opacity-30'
+                              }`}
+                            />
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Hearts (left) & Hunger (right) */}
+                <div className="flex justify-between items-center">
+                  <div className="flex gap-0.5">
+                    {Array.from({ length: 10 }).map((_, i) => {
+                      const val = hud.health - i * 2;
                       return (
-                        <ArmorIcon
+                        <HeartIcon
                           key={i}
                           state={val >= 2 ? 'full' : val === 1 ? 'half' : 'empty'}
                         />
                       );
                     })}
-                </div>
-                <div className="flex gap-0.5">
-                  {hud.isUnderwater &&
-                    Array.from({ length: 10 }).map((_, i) => {
-                      const filled = hud.air >= (i + 1) * 2;
+                  </div>
+                  <div className="flex gap-0.5 flex-row-reverse">
+                    {Array.from({ length: 10 }).map((_, i) => {
+                      const val = hud.hunger - i * 2;
                       return (
-                        <span
+                        <HungerIcon
                           key={i}
-                          className={`w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full border border-[#1d4ed8] ${
-                            filled ? 'bg-[#60a5fa]' : 'bg-transparent opacity-30'
-                          }`}
+                          state={val >= 2 ? 'full' : val === 1 ? 'half' : 'empty'}
                         />
                       );
                     })}
+                  </div>
+                </div>
+
+                {/* Classic 18-Segment Java XP Progress Bar */}
+                <div className="relative h-[7px] bg-[#161b12] border border-black shadow-[inset_0_1px_0_#0a0d08]">
+                  <div
+                    className="h-full bg-[#80ff20] border-b border-[#3a7a0c]"
+                    style={{ width: `${Math.round(hud.xpProgress * 100)}%` }}
+                  />
+                  <div
+                    className="absolute inset-0 grid pointer-events-none"
+                    style={{ gridTemplateColumns: 'repeat(18, 1fr)' }}
+                  >
+                    {Array.from({ length: 18 }).map((_, i) => (
+                      <div key={i} className="border-r border-black/45 last:border-r-0" />
+                    ))}
+                  </div>
+                  {hud.xpLevel > 0 && (
+                    <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-xs font-bold text-[#80ff20] mc-outline-shadow tabular-nums">
+                      {hud.xpLevel}
+                    </span>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* Hearts (left) & Hunger (right) */}
-            <div className="flex justify-between items-center">
-              <div className="flex gap-0.5">
-                {Array.from({ length: 10 }).map((_, i) => {
-                  const val = hud.health - i * 2;
-                  return (
-                    <HeartIcon
-                      key={i}
-                      state={val >= 2 ? 'full' : val === 1 ? 'half' : 'empty'}
-                    />
-                  );
-                })}
-              </div>
-              <div className="flex gap-0.5 flex-row-reverse">
-                {Array.from({ length: 10 }).map((_, i) => {
-                  const val = hud.hunger - i * 2;
-                  return (
-                    <HungerIcon
-                      key={i}
-                      state={val >= 2 ? 'full' : val === 1 ? 'half' : 'empty'}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* XP Progress Bar */}
-            <div className="relative h-2 bg-[#1a1a1a] border border-black">
-              <div
-                className="h-full bg-[#80ff20]"
-                style={{ width: `${Math.round(hud.xpProgress * 100)}%` }}
-              />
-              {hud.xpLevel > 0 && (
-                <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 text-xs font-bold text-[#80ff20] mc-text-shadow tabular-nums">
-                  {hud.xpLevel}
-                </span>
-              )}
+            {/* 9-Slot Java Hotbar */}
+            <div className="pointer-events-auto flex items-center gap-[2px] mc-hotbar p-[3px]">
+              {hud.hotbar.map((stack, i) => (
+                <ItemSlot
+                  key={i}
+                  stack={stack}
+                  atlasCanvas={atlasCanvas}
+                  selected={hud.selectedHotbar === i}
+                  variant="hotbar"
+                  size={hotbarSlotSize}
+                  onMouseDown={() => onSelectHotbar(i)}
+                />
+              ))}
             </div>
           </div>
-        )}
 
-        {/* 9-Slot Hotbar + Quick Inventory Trigger */}
-        <div className="flex items-center gap-1 pointer-events-auto">
-          <div className="flex items-center gap-0.5 bg-black/75 p-1 border-2 border-[#3f3f3f]">
-            {hud.hotbar.map((stack, i) => (
-              <ItemSlot
-                key={i}
-                stack={stack}
-                atlasCanvas={atlasCanvas}
-                selected={hud.selectedHotbar === i}
-                size={hotbarSlotSize}
-                onMouseDown={() => onSelectHotbar(i)}
-              />
-            ))}
-          </div>
           <button
-            onClick={onOpenInventory}
-            className="mc-button h-[42px] sm:h-[52px] px-2.5 text-[11px] font-bold cursor-pointer"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onOpenInventory();
+            }}
+            className="pointer-events-auto mc-button h-[40px] sm:h-[50px] px-2.5 text-[11px] font-bold cursor-pointer mb-[1px]"
             title="Open Inventory (E)"
           >
             •••
