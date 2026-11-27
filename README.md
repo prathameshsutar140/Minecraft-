@@ -110,73 +110,152 @@ Minecraft-/
 
 ## Getting started
 
-### Prerequisites
+Follow these steps to run the project locally. The commands below are for Windows PowerShell unless noted otherwise; the same project can also be run on macOS and Linux.
 
-- A recent version of **Node.js** compatible with Vite 8.
-- **Bun** (recommended because this repository includes `bun.lock`), or npm.
-- A modern browser with WebGL support.
+### Requirements
 
-### 1. Clone the repository
+Install the following before starting:
+
+| Requirement | Version / notes | Why it is needed |
+| --- | --- | --- |
+| **Windows 10/11, macOS, or Linux** | A supported desktop operating system | To install dependencies and run the development server. |
+| **Node.js** | **20.19+ or 22.12+** | Required by the Vite 8 toolchain. Install the current LTS release that meets this requirement. |
+| **npm** | Included with Node.js | Alternative package manager; no separate installation is normally needed. |
+| **Bun** | Current stable release (recommended) | Optional package manager; this repository includes `bun.lock`. |
+| **Git** | Current version | Required to clone the repository. |
+| **Modern browser** | Chrome, Edge, Firefox, or another current browser with WebGL 2 support and hardware acceleration | Required to render the 3D game. |
+
+A dedicated graphics card is not mandatory, but 3D performance depends on your device and browser. Keep browser hardware acceleration enabled where available.
+
+### 1. Install the tools
+
+- Install Node.js from [nodejs.org](https://nodejs.org/). Choose a version supported by Vite 8.
+- Install Git from [git-scm.com](https://git-scm.com/).
+- Optional: install Bun from [bun.sh](https://bun.sh/) if you want to use the repository's recommended package-manager workflow.
+
+Check that the tools are available in a new terminal:
+
+```powershell
+node --version
+npm --version
+git --version
+```
+
+If you installed Bun, also check:
+
+```powershell
+bun --version
+```
+
+### 2. Clone the repository
+
+Open PowerShell, Windows Terminal, Command Prompt, or a terminal on macOS/Linux:
 
 ```bash
 git clone https://github.com/prathameshsutar140/Minecraft-.git
 cd Minecraft-
 ```
 
-### 2. Install dependencies
+### 3. Install project dependencies
 
-Using Bun:
+**Recommended — Bun** (uses the committed `bun.lock`):
 
 ```bash
 bun install
 ```
 
-Or using npm:
+**Alternative — npm**:
 
 ```bash
 npm install
 ```
 
-### 3. Configure environment variables
+Use one package manager consistently for a given install. Do not mix Bun and npm lockfiles in the same working setup.
 
-Copy the example file if you need the environment values used by your local setup:
+### 4. Configure environment variables (only if needed)
+
+The repository provides an `.env.example` template. The normal local game launch does not require you to invent values for these settings. If you are testing a feature that makes Gemini API calls or depends on the hosted app URL, create a local `.env` file:
+
+**Windows PowerShell:**
+
+```powershell
+Copy-Item .env.example .env
+```
+
+**Windows Command Prompt:**
+
+```cmd
+copy .env.example .env
+```
+
+**macOS / Linux:**
 
 ```bash
 cp .env.example .env
 ```
 
-Then replace the example values with your own configuration. Never commit real credentials.
+Open `.env` and replace the example values only with valid values for the feature you are configuring:
 
-### 4. Start the development server
+- `GEMINI_API_KEY` — used for Gemini API calls, if that functionality is enabled.
+- `APP_URL` — the hosted application URL for integrations that require it; AI Studio supplies this automatically in its hosted environment.
 
-Using Bun:
+Do not commit `.env` or share API keys publicly. The example values are placeholders, not working credentials. Never put a private API key into client-side code.
+
+### 5. Start the development server
+
+From the repository root, run **one** of these commands:
 
 ```bash
+# Bun
 bun run dev
-```
 
-Or using npm:
-
-```bash
+# npm
 npm run dev
 ```
 
-Vite is configured to listen on port **3000**. Open:
+Vite starts the development server on port **3000**. Open this address in your browser:
 
 ```text
 http://localhost:3000
 ```
 
-## Environment configuration
+Keep the terminal running while you play. To stop the server, focus the terminal and press `Ctrl + C`.
 
-The repository includes an `.env.example` template with these variables:
+### 6. Create and preview a production build (optional)
 
-| Variable | Purpose |
+Build the optimized app:
+
+```bash
+# Bun
+bun run build
+
+# npm
+npm run build
+```
+
+Preview the generated production build locally:
+
+```bash
+# Bun
+bun run preview
+
+# npm
+npm run preview
+```
+
+Vite prints the local preview address in the terminal. Open that address in your browser.
+
+### Troubleshooting
+
+| Problem | What to try |
 | --- | --- |
-| `GEMINI_API_KEY` | Credential for Gemini API functionality, if enabled by the application configuration. |
-| `APP_URL` | Base URL for the hosted application where required by the runtime/integrations. |
+| `node` or `npm` is not recognized | Install Node.js, close and reopen the terminal, then check `node --version` and `npm --version`. |
+| Vite reports an unsupported Node.js version | Upgrade to Node.js **20.19+ or 22.12+**, then reinstall dependencies. |
+| `bun` is not recognized | Install Bun, or use the npm commands shown above. |
+| Port 3000 is already in use | Stop the other process using that port, then run the project again. |
+| The page loads but the 3D scene is blank or slow | Update your browser and graphics drivers, enable browser hardware acceleration, and confirm WebGL 2 is supported. |
+| Dependencies appear incomplete | From the project folder, run `bun install` or `npm install` again, then restart the development server. |
 
-Keep secrets out of source control. The `.env` file should remain local and must not be committed. For production, store credentials in the hosting provider's secret/environment-variable manager. Do not expose a private API key in browser-delivered code.
 
 ## Controls
 
