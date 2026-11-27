@@ -1,10 +1,16 @@
 export type GamePhase = 'title' | 'playing' | 'paused' | 'dead';
 
-export type GameMode = 'survival' | 'creative' | 'spectator';
+export type GameMode = 'survival' | 'hardcore' | 'creative' | 'spectator';
 
-export type BiomeType = 'plains' | 'forest' | 'desert' | 'taiga' | 'mountains';
+export type DimensionType = 'overworld' | 'nether';
+
+export type BiomeType = 'plains' | 'forest' | 'desert' | 'taiga' | 'mountains' | 'cherry';
 
 export type WeatherType = 'clear' | 'rain';
+
+export type GraphicsQuality = 'fast' | 'fancy' | 'vibrant';
+export type CloudStyle = 'fancy' | 'fast' | 'off';
+export type LeafQuality = 'fancy' | 'fast';
 
 export type ContainerType =
   | 'none'
@@ -76,6 +82,23 @@ export enum BlockId {
   OakDoorOpen = 57,
   OakFence = 58,
   EnchantingTable = 59,
+  NetherPortal = 60,
+  NetherQuartzOre = 61,
+  SoulSand = 62,
+  RedstoneWire = 63,
+  RedstoneWireOn = 64,
+  RedstoneTorch = 65,
+  LeverOff = 66,
+  LeverOn = 67,
+  RedstoneLampOff = 68,
+  RedstoneLampOn = 69,
+  Deepslate = 70,
+  CopperOre = 71,
+  CopperBlock = 72,
+  CherryLog = 73,
+  CherryLeaves = 74,
+  CherryPlanks = 75,
+  AmethystBlock = 76,
 }
 
 export type ItemId =
@@ -91,6 +114,7 @@ export type ItemId =
   | 'emerald'
   | 'lapis_lazuli'
   | 'redstone'
+  | 'quartz'
   | 'flint'
   | 'leather'
   | 'feather'
@@ -143,7 +167,12 @@ export type ItemId =
   | 'diamond_helmet'
   | 'diamond_chestplate'
   | 'diamond_leggings'
-  | 'diamond_boots';
+  | 'diamond_boots'
+  | 'raw_copper'
+  | 'copper_ingot'
+  | 'shield'
+  | 'spyglass'
+  | 'mace';
 
 export type ToolCategory = 'none' | 'pickaxe' | 'axe' | 'shovel' | 'sword' | 'hoe';
 export type ArmorSlotType = 'helmet' | 'chestplate' | 'leggings' | 'boots';
@@ -231,11 +260,14 @@ export interface AdvancementToast {
 
 export interface GameOptions {
   fov: number;
-  renderDistance: number; // chunks radius (3..6)
+  renderDistance: number; // chunks radius (3..8)
   mouseSensitivity: number;
   soundVolume: number;
   muted: boolean;
   showClouds: boolean;
+  graphicsQuality: GraphicsQuality;
+  cloudStyle: CloudStyle;
+  leafQuality: LeafQuality;
   touchControls: 'auto' | 'on' | 'off';
 }
 
@@ -252,6 +284,8 @@ export interface HudSnapshot {
   xpProgress: number;
   score: number;
   gameMode: GameMode;
+  dimension: DimensionType;
+  portalCharge: number;
   selectedHotbar: number;
   hotbar: (ItemStack | null)[];
   inventory: (ItemStack | null)[]; // 27 slots
@@ -266,6 +300,10 @@ export interface HudSnapshot {
   isSneaking: boolean;
   isUnderwater: boolean;
   isInLava: boolean;
+  isSwimming: boolean;
+  isBlocking: boolean;
+  isSpyglassZoom: boolean;
+  attackCharge: number;
   damageFlash: number;
   advancements: string[];
   targetBlock: {

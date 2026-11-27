@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
   AdvancementToast,
   BlockId,
   ChatMessage,
   ChestState,
   ContainerType,
+  DimensionType,
   EnchantmentData,
   FurnaceState,
   GameMode,
@@ -25,7 +25,7 @@ import {
   ITEMS,
 } from '../data/itemsAndBlocks';
 import { findSmeltOutput } from '../data/recipes';
-import { ATLAS_COLS, ATLAS_ROWS, buildTextureAtlas, createItemCanvasTexture, getBlockFaceTile } from './textures';
+import { ATLAS_COLS, ATLAS_ROWS, buildTextureAtlas, createExtrudedItemGeometry, getBlockFaceTile } from './textures';
 import { CHUNK_HEIGHT, CHUNK_SIZE, VoxelHit, VoxelWorld } from './world';
 import {
   ArrowEntity,
@@ -47,15 +47,23 @@ import { soundEngine } from './audio';
 
 const _vec3 = new THREE.Vector3();
 const _vec3b = new THREE.Vector3();
+const _vec3c = new THREE.Vector3();
 const _dir = new THREE.Vector3();
+const _euler = new THREE.Euler(0, 0, 0, 'YXZ');
+const _sunDir = new THREE.Vector3(0.4, 0.85, 0.2).normalize();
 const _skyColor = new THREE.Color();
 const _fogColor = new THREE.Color();
 const _noonSky = new THREE.Color(0x78a7ff);
 const _sunsetSky = new THREE.Color(0xd97348);
 const _nightSky = new THREE.Color(0x090d1a);
 const _rainSky = new THREE.Color(0x4c586b);
+const _netherSky = new THREE.Color(0x330808);
+const _cloudNight = new THREE.Color(0x232b3d);
+const _cloudDay = new THREE.Color(0xffffff);
+const _cloudSunset = new THREE.Color(0xffb088);
 
-const SAVE_KEY = 'minecraft_java_edition_save_v1';
+const SAVE_KEY = 'minecraft_bedrock_edition_save_v1';
+const LEGACY_SAVE_KEY = 'minecraft_java_edition_save_v1';
 
 interface ParticleItem {
   mesh: THREE.Mesh;
@@ -73,7 +81,7 @@ export interface SaveSummary {
 
 export function getSavedWorldSummary(): SaveSummary | null {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(SAVE_KEY) ?? localStorage.getItem(LEGACY_SAVE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return {
@@ -109,7 +117,16 @@ export class MinecraftEngine {
   private crackTextures: THREE.CanvasTexture[];
 
   public world!: VoxelWorld;
+  private worlds: Record<DimensionType, VoxelWorld | null> = { overworld: null, nether: null };
+  private currentDimension: DimensionType = 'overworld';
   private worldSeed = 133742;
+  private portalCharge = 0;
+  private portalCooldown = 0;
+  private elapsedTime = 0;
+  private activeFluidCells = new Set<string>();
+  private waterFlowTimer = 0;
+  private lavaFlowTimer = 0;
+  private poweredDoors = new Set<string>();
 
   // Player state
   public phase: GamePhase = 'title';
@@ -121,6 +138,9 @@ export class MinecraftEngine {
     soundVolume: 0.65,
     muted: false,
     showClouds: true,
+    graphicsQuality: 'vibrant',
+    cloudStyle: 'fancy',
+    leafQuality: 'fancy',
     touchControls: 'auto',
   };
 
@@ -174,10 +194,17 @@ export class MinecraftEngine {
   private heldArmGroup: THREE.Group;
   private heldBlockMesh: THREE.Mesh;
   private heldSpriteMesh: THREE.Mesh;
-  private heldItemTexture: THREE.CanvasTexture | null = null;
+  private heldMode: 'arm' | 'block' | 'item' | 'shield' | 'spyglass' = 'arm';
+  private lastHeldSignature = '';
   private swingProgress = 0;
   private isSwinging = false;
   private walkBobPhase = 0;
+  private idleBreathPhase = 0;
+  private equipProgress = 1;
+  private eatAnimTimer = 0;
+  private lookSwayX = 0;
+  private lookSwayY = 0;
+  private sprintBlend = 0;
 
   // Block selection & breaking
   private selectionWireframe: THREE.LineSegments;
@@ -226,6 +253,12 @@ export class MinecraftEngine {
   private touchMineHeld = false;
   private touchSprintToggle = false;
   private touchSneakToggle = false;
+  private touchBlockToggle = false;
+  private touchSpyglassToggle = false;
+  private isSwimming = false;
+  private attackCooldown = 0;
+  private attackCooldownMax = 0.55;
+  private cherryPetalTimer = 0;
 
   // Loop & callbacks
   private frameId = 0;
@@ -276,7 +309,7 @@ export class MinecraftEngine {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 1.06;
-    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 1.5));
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setSize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
@@ -285,10 +318,6 @@ export class MinecraftEngine {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x78a7ff);
     this.scene.fog = new THREE.Fog(0x78a7ff, 30, 76);
-
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmrem.dispose();
 
     const w = container.clientWidth || window.innerWidth;
     const h = container.clientHeight || window.innerHeight;
@@ -441,41 +470,43 @@ export class MinecraftEngine {
     this.crackOverlay.visible = false;
     this.scene.add(this.crackOverlay);
 
-    // First-person held Steve arm + 3D textured voxel block + pixel-art held item viewmodel
+    // First-person held Bedrock arm + 3D textured voxel block + 3D extruded voxel item viewmodel
     this.viewModelGroup = new THREE.Group();
 
     this.heldArmGroup = new THREE.Group();
     const armSkin = new THREE.Mesh(
-      new THREE.BoxGeometry(0.18, 0.18, 0.44),
-      new THREE.MeshStandardMaterial({ color: 0xd9a788, roughness: 0.85 })
+      new THREE.BoxGeometry(0.16, 0.16, 0.48),
+      new THREE.MeshLambertMaterial({ color: 0xd9a788 })
     );
+    const armHandShade = new THREE.Mesh(
+      new THREE.BoxGeometry(0.164, 0.04, 0.14),
+      new THREE.MeshLambertMaterial({ color: 0xc58d6b })
+    );
+    armHandShade.position.set(0, -0.062, -0.16);
     const armSleeve = new THREE.Mesh(
-      new THREE.BoxGeometry(0.19, 0.19, 0.16),
-      new THREE.MeshStandardMaterial({ color: 0x1aa3a8, roughness: 0.85 })
+      new THREE.BoxGeometry(0.175, 0.175, 0.2),
+      new THREE.MeshLambertMaterial({ color: 0x1aa3a8 })
     );
     armSleeve.position.set(0, 0, 0.22);
-    this.heldArmGroup.add(armSkin, armSleeve);
-    this.heldArmGroup.position.set(0.44, -0.36, -0.52);
+    this.heldArmGroup.add(armSkin, armHandShade, armSleeve);
+    this.heldArmGroup.position.set(0.42, -0.35, -0.5);
     this.heldArmGroup.rotation.set(0.28, -0.38, 0.18);
 
     this.heldBlockMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(0.28, 0.28, 0.28),
+      new THREE.BoxGeometry(0.27, 0.27, 0.27),
       new THREE.MeshLambertMaterial({ map: this.atlasTexture })
     );
-    this.heldBlockMesh.position.set(0.42, -0.34, -0.58);
-    this.heldBlockMesh.rotation.set(0.18, 0.65, 0.08);
+    this.heldBlockMesh.position.set(0.39, -0.31, -0.57);
+    this.heldBlockMesh.rotation.set(0.18, 0.68, 0.06);
     this.heldBlockMesh.visible = false;
 
     this.heldSpriteMesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.36, 0.36),
-      new THREE.MeshBasicMaterial({
-        transparent: true,
-        alphaTest: 0.4,
-        side: THREE.DoubleSide,
-      })
+      new THREE.BufferGeometry(),
+      new THREE.MeshLambertMaterial({ vertexColors: true })
     );
-    this.heldSpriteMesh.position.set(0.42, -0.28, -0.55);
-    this.heldSpriteMesh.rotation.set(0.1, -0.45, 0.12);
+    this.heldSpriteMesh.position.set(0.39, -0.23, -0.56);
+    this.heldSpriteMesh.rotation.set(0.12, -0.52, 0.18);
+    this.heldSpriteMesh.scale.setScalar(0.36);
     this.heldSpriteMesh.visible = false;
 
     this.viewModelGroup.add(this.heldArmGroup, this.heldBlockMesh, this.heldSpriteMesh);
@@ -486,12 +517,8 @@ export class MinecraftEngine {
     this.playerModel.group.visible = false;
     this.scene.add(this.playerModel.group);
 
-    // Generate initial showcase terrain for Title Screen
+    // Generate initial showcase terrain for Title Screen (fast 3x3 sync, stream outer chunks cleanly)
     this.initWorld(133742, 'survival', false);
-
-    if (!this.isSoftwareGl) {
-      this.renderer.compile(this.scene, this.camera);
-    }
 
     this.bindEvents();
     this.startLoop();
@@ -501,11 +528,25 @@ export class MinecraftEngine {
     return this.atlasCanvas;
   }
 
+  private isSurvivalLike(): boolean {
+    return this.gameMode === 'survival' || this.gameMode === 'hardcore';
+  }
+
   public initWorld(seed: number, mode: GameMode, giveBonusChest: boolean) {
     if (this.world) {
       this.scene.remove(this.world.group);
-      this.world.dispose();
     }
+    this.worlds.overworld?.dispose();
+    this.worlds.nether?.dispose();
+    this.worlds = { overworld: null, nether: null };
+    this.currentDimension = 'overworld';
+    this.portalCharge = 0;
+    this.portalCooldown = 0;
+    this.activeFluidCells.clear();
+    this.waterFlowTimer = 0;
+    this.lavaFlowTimer = 0;
+    this.poweredDoors.clear();
+
     this.clearEntities();
     this.furnaces.clear();
     this.chests.clear();
@@ -513,18 +554,21 @@ export class MinecraftEngine {
 
     this.worldSeed = seed;
     this.gameMode = mode;
-    this.world = new VoxelWorld(seed, this.atlasTexture);
+    const overworld = new VoxelWorld(seed, this.atlasTexture, 'overworld');
+    this.worlds.overworld = overworld;
+    this.world = overworld;
     this.scene.add(this.world.group);
 
-    // Pre-generate spawn chunks
-    const r = this.options.renderDistance;
-    for (let cx = -r; cx <= r; cx++) {
-      for (let cz = -r; cz <= r; cz++) {
+    // Pre-generate immediate 3x3 spawn chunks synchronously for instant launch; outer chunks stream smoothly
+    const initR = Math.min(1, this.options.renderDistance);
+    for (let cx = -initR; cx <= initR; cx++) {
+      for (let cz = -initR; cz <= initR; cz++) {
         this.world.ensureChunk(cx, cz);
       }
     }
-    this.world.updateDirtyChunks(999);
+    this.world.updateDirtyChunks(999, 0, 0);
     this.populatePendingStructureChests();
+    this.applyVisualOptions();
 
     const spawnY = this.world.getTopSolidY(0, 0);
     this.playerPos.set(0.5, spawnY + 0.2, 0.5);
@@ -592,18 +636,51 @@ export class MinecraftEngine {
 
   public loadSavedGame(): boolean {
     try {
-      const raw = localStorage.getItem(SAVE_KEY);
+      const raw = localStorage.getItem(SAVE_KEY) ?? localStorage.getItem(LEGACY_SAVE_KEY);
       if (!raw) return false;
       const data = JSON.parse(raw);
       this.initWorld(data.seed ?? 133742, data.gameMode ?? 'survival', false);
 
-      if (Array.isArray(data.deltas)) {
-        for (const [k, bId] of data.deltas) {
-          this.world.deltas.set(k, bId);
+      const ow = this.worlds.overworld!;
+      const owDeltas: [string, BlockId][] = Array.isArray(data.overworldDeltas)
+        ? data.overworldDeltas
+        : Array.isArray(data.deltas)
+          ? data.deltas
+          : [];
+      for (const [k, bId] of owDeltas) {
+        ow.deltas.set(k, bId);
+        const [dx, dy, dz] = k.split(',').map(Number);
+        ow.setBlock(dx, dy, dz, bId, false);
+      }
+      if (Array.isArray(data.overworldFluidDeltas)) {
+        for (const [k, lvl] of data.overworldFluidDeltas) {
+          ow.fluidDeltas.set(k, lvl);
           const [dx, dy, dz] = k.split(',').map(Number);
-          this.world.setBlock(dx, dy, dz, bId, false);
+          ow.setFluidLevel(dx, dy, dz, lvl, false);
         }
-        this.world.updateDirtyChunks(999);
+      }
+      ow.updateDirtyChunks(999);
+
+      const savedDim: DimensionType = data.dimension === 'nether' ? 'nether' : 'overworld';
+      const netherDeltas: [string, BlockId][] = Array.isArray(data.netherDeltas) ? data.netherDeltas : [];
+      if (savedDim === 'nether' || netherDeltas.length > 0) {
+        const nw = new VoxelWorld(this.worldSeed + 666, this.atlasTexture, 'nether');
+        for (const [k, bId] of netherDeltas) {
+          nw.deltas.set(k, bId);
+        }
+        if (Array.isArray(data.netherFluidDeltas)) {
+          for (const [k, lvl] of data.netherFluidDeltas) {
+            nw.fluidDeltas.set(k, lvl);
+          }
+        }
+        this.worlds.nether = nw;
+      }
+
+      if (savedDim === 'nether' && this.worlds.nether) {
+        this.scene.remove(this.world.group);
+        this.currentDimension = 'nether';
+        this.world = this.worlds.nether;
+        this.scene.add(this.world.group);
       }
 
       if (data.playerPos) this.playerPos.set(data.playerPos.x, data.playerPos.y, data.playerPos.z);
@@ -625,9 +702,23 @@ export class MinecraftEngine {
       if (Array.isArray(data.chests)) this.chests = new Map(data.chests);
       if (Array.isArray(data.advancements)) this.unlockedAdvancements = new Set(data.advancements);
 
+      if (savedDim === 'nether') {
+        const pcx = Math.floor(this.playerPos.x / CHUNK_SIZE);
+        const pcz = Math.floor(this.playerPos.z / CHUNK_SIZE);
+        const r = this.options.renderDistance;
+        for (let cx = pcx - r; cx <= pcx + r; cx++) {
+          for (let cz = pcz - r; cz <= pcz + r; cz++) {
+            this.world.ensureChunk(cx, cz);
+          }
+        }
+        this.world.updateDirtyChunks(999);
+      }
+
+      this.isFlying = this.gameMode === 'creative' || this.gameMode === 'spectator';
       this.phase = 'playing';
       this.activeContainer = 'none';
       this.onPhaseChange('playing');
+      this.applyVisualOptions();
       this.updateHeldItemAppearance();
       this.syncHud();
       this.requestPointerLock();
@@ -640,9 +731,12 @@ export class MinecraftEngine {
 
   public saveGame() {
     try {
+      const ow = this.worlds.overworld ?? this.world;
+      const nw = this.worlds.nether;
       const payload = {
         seed: this.worldSeed,
         gameMode: this.gameMode,
+        dimension: this.currentDimension,
         playerPos: { x: this.playerPos.x, y: this.playerPos.y, z: this.playerPos.z },
         spawnPoint: { x: this.spawnPoint.x, y: this.spawnPoint.y, z: this.spawnPoint.z },
         yaw: this.yaw,
@@ -658,7 +752,11 @@ export class MinecraftEngine {
         hotbar: this.hotbar,
         inventory: this.inventory,
         armorSlots: this.armorSlots,
-        deltas: Array.from(this.world.deltas.entries()),
+        deltas: Array.from(ow.deltas.entries()),
+        overworldDeltas: Array.from(ow.deltas.entries()),
+        overworldFluidDeltas: Array.from(ow.fluidDeltas.entries()),
+        netherDeltas: nw ? Array.from(nw.deltas.entries()) : [],
+        netherFluidDeltas: nw ? Array.from(nw.fluidDeltas.entries()) : [],
         furnaces: Array.from(this.furnaces.entries()),
         chests: Array.from(this.chests.entries()),
         advancements: Array.from(this.unlockedAdvancements),
@@ -678,6 +776,32 @@ export class MinecraftEngine {
     this.onPhaseChange('title');
   }
 
+  public spectateHardcoreWorld() {
+    this.gameMode = 'spectator';
+    this.isFlying = true;
+    this.health = 20;
+    this.damageFlash = 0;
+    this.activeContainer = 'none';
+    this.phase = 'playing';
+    this.onPhaseChange('playing');
+    this.requestPointerLock();
+    this.pushChat('Spectating your Hardcore world. Press Esc to quit.', '#d4d4d8');
+    this.syncHud();
+  }
+
+  public clearSavedWorld() {
+    try {
+      localStorage.removeItem(SAVE_KEY);
+      localStorage.removeItem(LEGACY_SAVE_KEY);
+    } catch {
+      // Ignore
+    }
+    this.exitPointerLock();
+    this.activeContainer = 'none';
+    this.phase = 'title';
+    this.onPhaseChange('title');
+  }
+
   public resumeGame() {
     this.activeContainer = 'none';
     this.activeBlockPos = null;
@@ -688,6 +812,9 @@ export class MinecraftEngine {
   }
 
   public respawnPlayer() {
+    if (this.currentDimension !== 'overworld') {
+      this.switchDimension('overworld');
+    }
     const sx = Math.floor(this.spawnPoint.x);
     const sz = Math.floor(this.spawnPoint.z);
     const safeY = Math.max(this.spawnPoint.y, this.world.getTopSolidY(sx, sz) + 0.2);
@@ -731,13 +858,30 @@ export class MinecraftEngine {
     this.syncHud();
   }
 
-  public updateOptions(next: Partial<GameOptions>) {
-    this.options = { ...this.options, ...next };
+  private applyVisualOptions() {
     this.camera.fov = this.options.fov;
     this.camera.updateProjectionMatrix();
     soundEngine.volume = this.options.soundVolume;
     soundEngine.muted = this.options.muted;
-    this.cloudGroup.visible = this.options.showClouds;
+
+    const showClouds =
+      this.currentDimension === 'overworld' &&
+      this.options.showClouds &&
+      this.options.cloudStyle !== 'off';
+    this.cloudGroup.visible = showClouds;
+    const cloudHeightScale = this.options.cloudStyle === 'fast' ? 0.15 : 1.0;
+    this.cloudGroup.children.forEach((c) => {
+      c.scale.y = cloudHeightScale;
+    });
+
+    this.sunLight.castShadow = !this.isSoftwareGl && this.options.graphicsQuality !== 'fast';
+    this.renderer.toneMappingExposure = this.options.graphicsQuality === 'vibrant' ? 1.12 : 1.04;
+    this.renderer.setPixelRatio(
+      this.isSoftwareGl || this.options.graphicsQuality === 'fast'
+        ? 1
+        : Math.min(window.devicePixelRatio, 1.5)
+    );
+
     const maxDist = Math.max(40, this.options.renderDistance * 16 + 10);
     if (this.scene.fog instanceof THREE.Fog) {
       this.scene.fog.near = maxDist * 0.42;
@@ -745,8 +889,25 @@ export class MinecraftEngine {
     }
   }
 
+  public updateOptions(next: Partial<GameOptions>) {
+    const merged: GameOptions = { ...this.options, ...next };
+    if (next.cloudStyle !== undefined && next.showClouds === undefined) {
+      merged.showClouds = next.cloudStyle !== 'off';
+    } else if (next.showClouds !== undefined && next.cloudStyle === undefined) {
+      merged.cloudStyle = next.showClouds ? 'fancy' : 'off';
+    }
+    this.options = merged;
+    this.applyVisualOptions();
+  }
+
   public selectHotbarSlot(index: number) {
-    this.selectedHotbar = ((index % 9) + 9) % 9;
+    const next = ((index % 9) + 9) % 9;
+    if (next !== this.selectedHotbar) {
+      this.equipProgress = 0;
+    }
+    this.selectedHotbar = next;
+    this.touchBlockToggle = false;
+    this.touchSpyglassToggle = false;
     this.updateHeldItemAppearance();
     this.syncHud();
   }
@@ -861,15 +1022,29 @@ export class MinecraftEngine {
 
   public triggerTouchPlaceOrUse() {
     if (this.phase !== 'playing' || this.activeContainer !== 'none') return;
+    const heldId = this.hotbar[this.selectedHotbar]?.id;
+    if (heldId === 'shield') {
+      this.touchBlockToggle = !this.touchBlockToggle;
+      this.syncHud();
+      return;
+    }
+    if (heldId === 'spyglass') {
+      this.touchSpyglassToggle = !this.touchSpyglassToggle;
+      this.syncHud();
+      return;
+    }
     this.rightClickCooldown = 0;
     this.handleRightClick();
   }
 
   public addLookDelta(dx: number, dy: number) {
     if (this.phase !== 'playing' || this.activeContainer !== 'none') return;
-    const sens = 0.0042 * this.options.mouseSensitivity;
+    const zoomScale = this.getIsSpyglassZoom() ? 0.35 : 1.0;
+    const sens = 0.0042 * this.options.mouseSensitivity * zoomScale;
     this.yaw -= dx * sens;
     this.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, this.pitch - dy * sens));
+    this.lookSwayX = THREE.MathUtils.clamp(this.lookSwayX - dx * 0.0014 * zoomScale, -0.09, 0.09);
+    this.lookSwayY = THREE.MathUtils.clamp(this.lookSwayY + dy * 0.0014 * zoomScale, -0.09, 0.09);
   }
 
   public toggleSprint() {
@@ -896,9 +1071,9 @@ export class MinecraftEngine {
     const list = zone === 'hotbar' ? this.hotbar : this.inventory;
     const stack = list[index];
     if (!stack) return false;
-    if (this.gameMode === 'survival' && this.xpLevel < xpCost) return false;
+    if (this.isSurvivalLike() && this.xpLevel < xpCost) return false;
 
-    if (this.gameMode === 'survival') {
+    if (this.isSurvivalLike()) {
       this.xpLevel -= xpCost;
     }
     list[index] = { ...stack, enchantment };
@@ -961,10 +1136,16 @@ export class MinecraftEngine {
     const arg1 = parts[1]?.toLowerCase();
 
     if (cmd === 'gamemode') {
-      if (arg1 === 'survival' || arg1 === '0' || arg1 === 's') {
+      if (this.gameMode === 'hardcore') {
+        this.pushChat('Cannot switch gamemode in Hardcore Mode!', '#fca5a5');
+      } else if (arg1 === 'survival' || arg1 === '0' || arg1 === 's') {
         this.gameMode = 'survival';
         this.isFlying = false;
         this.pushChat('Set own game mode to Survival Mode', '#fde68a');
+      } else if (arg1 === 'hardcore') {
+        this.gameMode = 'hardcore';
+        this.isFlying = false;
+        this.pushChat('Set own game mode to Hardcore Mode (1 life!)', '#fca5a5');
       } else if (arg1 === 'creative' || arg1 === '1' || arg1 === 'c') {
         this.gameMode = 'creative';
         this.pushChat('Set own game mode to Creative Mode', '#fde68a');
@@ -973,7 +1154,13 @@ export class MinecraftEngine {
         this.isFlying = true;
         this.pushChat('Set own game mode to Spectator Mode', '#fde68a');
       } else {
-        this.pushChat('Usage: /gamemode <survival|creative|spectator>', '#fca5a5');
+        this.pushChat('Usage: /gamemode <survival|hardcore|creative|spectator>', '#fca5a5');
+      }
+    } else if (cmd === 'dimension') {
+      if (arg1 === 'nether' || arg1 === 'overworld') {
+        this.switchDimension(arg1);
+      } else {
+        this.pushChat('Usage: /dimension <overworld|nether>', '#fca5a5');
       }
     } else if (cmd === 'time' && arg1 === 'set') {
       const t = parts[2]?.toLowerCase();
@@ -1025,7 +1212,7 @@ export class MinecraftEngine {
       this.inventory.fill(null);
       this.pushChat('Cleared player inventory.', '#fde68a');
     } else if (cmd === 'help') {
-      this.pushChat('Commands: /gamemode, /time set, /weather, /give, /tp, /seed, /heal, /clear', '#d1d5db');
+      this.pushChat('Commands: /gamemode, /dimension, /time set, /weather, /give, /tp, /seed, /heal, /clear', '#d1d5db');
     } else {
       this.pushChat(`Unknown command: /${cmd}. Type /help`, '#fca5a5');
     }
@@ -1101,10 +1288,13 @@ export class MinecraftEngine {
 
     const onMouseMove = (e: MouseEvent) => {
       if (this.phase !== 'playing' || this.activeContainer !== 'none') return;
-      const sens = 0.0022 * this.options.mouseSensitivity;
+      const zoomScale = this.getIsSpyglassZoom() ? 0.35 : 1.0;
+      const sens = 0.0022 * this.options.mouseSensitivity * zoomScale;
       if (this.pointerLocked) {
         this.yaw -= e.movementX * sens;
         this.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, this.pitch - e.movementY * sens));
+        this.lookSwayX = THREE.MathUtils.clamp(this.lookSwayX - e.movementX * 0.0009 * zoomScale, -0.09, 0.09);
+        this.lookSwayY = THREE.MathUtils.clamp(this.lookSwayY + e.movementY * 0.0009 * zoomScale, -0.09, 0.09);
       } else if (this.isDraggingLook) {
         const dx = e.clientX - this.lastPointerX;
         const dy = e.clientY - this.lastPointerY;
@@ -1112,6 +1302,8 @@ export class MinecraftEngine {
         this.lastPointerY = e.clientY;
         this.yaw -= dx * sens * 1.4;
         this.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, this.pitch - dy * sens * 1.4));
+        this.lookSwayX = THREE.MathUtils.clamp(this.lookSwayX - dx * 0.0012 * zoomScale, -0.09, 0.09);
+        this.lookSwayY = THREE.MathUtils.clamp(this.lookSwayY + dy * 0.0012 * zoomScale, -0.09, 0.09);
       }
     };
     document.addEventListener('mousemove', onMouseMove);
@@ -1271,9 +1463,9 @@ export class MinecraftEngine {
     clearTimeout(this.frameId);
     this.cleanupListeners();
     this.clearEntities();
-    this.world.dispose();
+    this.worlds.overworld?.dispose();
+    this.worlds.nether?.dispose();
     this.atlasTexture.dispose();
-    this.heldItemTexture?.dispose();
     this.crackTextures.forEach((t) => t.dispose());
     this.particleGeo.dispose();
     this.renderer.dispose();
@@ -1299,13 +1491,17 @@ export class MinecraftEngine {
 
   private updateHeldItemAppearance() {
     const slot = this.hotbar[this.selectedHotbar];
-    if (this.heldItemTexture) {
-      this.heldItemTexture.dispose();
-      this.heldItemTexture = null;
+    const sig = slot ? `${slot.id}` : 'empty';
+    if (sig !== this.lastHeldSignature) {
+      this.lastHeldSignature = sig;
+      this.equipProgress = Math.min(this.equipProgress, 0.15);
     }
 
     if (!slot) {
+      this.heldMode = 'arm';
       this.heldArmGroup.visible = true;
+      this.heldArmGroup.position.set(0.42, -0.35, -0.5);
+      this.heldArmGroup.rotation.set(0.28, -0.38, 0.18);
       this.heldBlockMesh.visible = false;
       this.heldSpriteMesh.visible = false;
       return;
@@ -1313,6 +1509,7 @@ export class MinecraftEngine {
 
     const flatBlockItem =
       slot.id === BLOCK_ITEM(BlockId.Torch) ||
+      slot.id === BLOCK_ITEM(BlockId.RedstoneTorch) ||
       slot.id === BLOCK_ITEM(BlockId.TallGrass) ||
       slot.id === BLOCK_ITEM(BlockId.Dandelion) ||
       slot.id === BLOCK_ITEM(BlockId.Poppy) ||
@@ -1343,44 +1540,72 @@ export class MinecraftEngine {
       }
       uvAttr.needsUpdate = true;
 
-      this.heldArmGroup.visible = false;
+      this.heldMode = 'block';
+      // Show supporting lower forearm gripping the 3D block in Bedrock style
+      this.heldArmGroup.visible = true;
+      this.heldArmGroup.position.set(0.49, -0.44, -0.44);
+      this.heldArmGroup.rotation.set(0.44, -0.32, 0.24);
       this.heldBlockMesh.visible = true;
       this.heldSpriteMesh.visible = false;
     } else {
-      const tex = flatBlockItem ? null : createItemCanvasTexture(slot.id, this.atlasCanvas);
-      const mat = this.heldSpriteMesh.material as THREE.MeshBasicMaterial;
-      const uvAttr = this.heldSpriteMesh.geometry.attributes.uv as THREE.BufferAttribute;
-      if (tex) {
-        this.heldItemTexture = tex;
-        mat.map = tex;
-        uvAttr.setXY(0, 0, 1);
-        uvAttr.setXY(1, 1, 1);
-        uvAttr.setXY(2, 0, 0);
-        uvAttr.setXY(3, 1, 0);
-      } else {
-        const bId = Number(slot.id.slice(6)) as BlockId;
-        const tile = getBlockFaceTile(bId, 'pz');
-        const colIdx = tile % ATLAS_COLS;
-        const rowIdx = Math.floor(tile / ATLAS_COLS);
-        const uStep = 1 / ATLAS_COLS;
-        const vStep = 1 / ATLAS_ROWS;
-        const u0 = colIdx * uStep + 0.002;
-        const u1 = (colIdx + 1) * uStep - 0.002;
-        const v1 = 1 - rowIdx * vStep - 0.002;
-        const v0 = 1 - (rowIdx + 1) * vStep + 0.002;
-        mat.map = this.atlasTexture;
-        uvAttr.setXY(0, u0, v1);
-        uvAttr.setXY(1, u1, v1);
-        uvAttr.setXY(2, u0, v0);
-        uvAttr.setXY(3, u1, v0);
-      }
-      uvAttr.needsUpdate = true;
-      mat.needsUpdate = true;
+      // Crisp cached 3D extruded voxel geometry for tools, weapons, mace, shield, spyglass, food, torches
+      this.heldSpriteMesh.geometry = createExtrudedItemGeometry(slot.id, this.atlasCanvas);
 
-      this.heldArmGroup.visible = false;
+      if (slot.id === 'shield') {
+        this.heldMode = 'shield';
+        this.heldArmGroup.visible = true;
+        this.heldArmGroup.position.set(0.48, -0.42, -0.42);
+        this.heldArmGroup.rotation.set(0.35, -0.25, 0.15);
+        this.heldSpriteMesh.position.set(0.36, -0.26, -0.52);
+        this.heldSpriteMesh.rotation.set(0.08, -0.28, 0.04);
+        this.heldSpriteMesh.scale.set(0.46, 0.48, 0.52);
+      } else if (slot.id === 'spyglass') {
+        this.heldMode = 'spyglass';
+        this.heldArmGroup.visible = true;
+        this.heldArmGroup.position.set(0.46, -0.4, -0.45);
+        this.heldArmGroup.rotation.set(0.32, -0.34, 0.16);
+        this.heldSpriteMesh.position.set(0.38, -0.22, -0.55);
+        this.heldSpriteMesh.rotation.set(0.22, -0.45, 0.26);
+        this.heldSpriteMesh.scale.set(0.38, 0.38, 0.65);
+      } else {
+        this.heldMode = 'item';
+        this.heldArmGroup.visible = true;
+        this.heldArmGroup.position.set(0.46, -0.42, -0.45);
+        this.heldArmGroup.rotation.set(0.38, -0.35, 0.2);
+        this.heldSpriteMesh.position.set(0.39, -0.22, -0.55);
+        this.heldSpriteMesh.rotation.set(0.14, -0.52, 0.16);
+        this.heldSpriteMesh.scale.setScalar(0.38);
+      }
+
       this.heldBlockMesh.visible = false;
       this.heldSpriteMesh.visible = true;
     }
+  }
+
+  private getIsBlocking(): boolean {
+    // Bedrock Edition: blocking activates when sneaking OR holding Right-Click / mobile USE with a Shield
+    return (
+      this.phase === 'playing' &&
+      this.activeContainer === 'none' &&
+      this.hotbar[this.selectedHotbar]?.id === 'shield' &&
+      (this.mouseRightDown || this.touchBlockToggle || this.isSneaking || this.touchSneakToggle)
+    );
+  }
+
+  private getIsSpyglassZoom(): boolean {
+    return (
+      this.phase === 'playing' &&
+      this.activeContainer === 'none' &&
+      this.hotbar[this.selectedHotbar]?.id === 'spyglass' &&
+      (this.mouseRightDown || this.touchSpyglassToggle)
+    );
+  }
+
+  private getWeaponCooldownDuration(): number {
+    // Bedrock Edition: snappy responsive swing cadence without sluggish Java delay
+    const id = this.hotbar[this.selectedHotbar]?.id;
+    if (id === 'mace') return 0.45;
+    return 0.22;
   }
 
   private triggerSwing() {
@@ -1399,13 +1624,11 @@ export class MinecraftEngine {
       slot.count -= dropCount;
     }
 
-    const forward = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
-    this.spawnDroppedItem(
-      droppedStack,
-      new THREE.Vector3(this.playerPos.x, this.playerPos.y + 1.35, this.playerPos.z),
-      forward.multiplyScalar(5.5).add(new THREE.Vector3(0, 2.2, 0)),
-      0.75
-    );
+    _euler.set(this.pitch, this.yaw, 0, 'YXZ');
+    _dir.set(0, 0, -1).applyEuler(_euler).multiplyScalar(5.5);
+    _dir.y += 2.2;
+    _vec3.set(this.playerPos.x, this.playerPos.y + 1.35, this.playerPos.z);
+    this.spawnDroppedItem(droppedStack, _vec3, _dir, 0.75);
     this.updateHeldItemAppearance();
     this.syncHud();
   }
@@ -1460,7 +1683,7 @@ export class MinecraftEngine {
   }
 
   private damageToolInHand() {
-    if (this.gameMode === 'creative') return;
+    if (!this.isSurvivalLike()) return;
     const slot = this.hotbar[this.selectedHotbar];
     if (!slot || slot.durability === undefined) return;
     if (slot.enchantment?.id === 'unbreaking') {
@@ -1477,7 +1700,8 @@ export class MinecraftEngine {
   private tryAttackMobOrStartBreak() {
     // Raycast against mobs first (within 3.8 blocks)
     const eye = _vec3.set(this.playerPos.x, this.playerPos.y + 1.62, this.playerPos.z);
-    _dir.set(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
+    _euler.set(this.pitch, this.yaw, 0, 'YXZ');
+    _dir.set(0, 0, -1).applyEuler(_euler);
 
     let hitMob: MobEntity | null = null;
     let bestDist = 3.8;
@@ -1496,8 +1720,31 @@ export class MinecraftEngine {
     }
 
     if (hitMob) {
+      if (this.attackCooldown > 0) return;
+      // Bedrock Edition snappy full-power melee hits + falling criticals + 1.21 Mace smash
       const isCrit = !this.onGround && this.playerVel.y < -0.5;
-      const dmg = this.getHeldDamage() * (isCrit ? 1.5 : 1);
+      let dmg = this.getHeldDamage() * (isCrit ? 1.5 : 1);
+
+      // 1.21 Mace Smash Attack when falling
+      const heldId = this.hotbar[this.selectedHotbar]?.id;
+      if (heldId === 'mace' && !this.onGround && this.playerVel.y < -1.5) {
+        const fallDist = Math.max(0, this.fallStartY - this.playerPos.y);
+        if (fallDist > 1.5) {
+          const smashBonus = Math.min(28, fallDist * 3.5);
+          dmg += smashBonus;
+          this.wasFalling = false;
+          this.fallStartY = this.playerPos.y;
+          this.playerVel.y = Math.max(this.playerVel.y, 4.5);
+          this.cameraShake = 0.26;
+          this.spawnParticles(_vec3c.set(hitMob.pos.x, hitMob.pos.y + 0.4, hitMob.pos.z), 0x3ee4e0, 16, 7);
+          if (smashBonus >= 12) {
+            this.unlockAdvancement('over_overkill', 'Over-Overkill', 'Deal massive Mace smash damage from a fall');
+          }
+        }
+      }
+
+      this.attackCooldownMax = this.getWeaponCooldownDuration();
+      this.attackCooldown = this.attackCooldownMax;
       this.damageMob(hitMob, dmg, _dir, isCrit);
       this.damageToolInHand();
       return;
@@ -1558,12 +1805,12 @@ export class MinecraftEngine {
   }
 
   private handleRightClick() {
-    if (this.rightClickCooldown > 0) return;
+    if (this.rightClickCooldown > 0 || this.gameMode === 'spectator') return;
     this.rightClickCooldown = 0.16;
 
     const held = this.hotbar[this.selectedHotbar];
 
-    // 1. Interact with targeted block (Crafting Table, Furnace, Chest, Enchanting Table, Bed, Door, TNT)
+    // 1. Interact with targeted block (Crafting Table, Furnace, Chest, Enchanting Table, Bed, Door, Lever, TNT)
     if (this.currentTarget && !this.isSneaking) {
       const { x, y, z, blockId } = this.currentTarget;
       const key = `${x},${y},${z}`;
@@ -1578,6 +1825,11 @@ export class MinecraftEngine {
         return;
       }
       if (blockId === BlockId.Bed) {
+        if (this.currentDimension === 'nether') {
+          this.world.setBlock(x, y, z, BlockId.Air);
+          this.explodeAt(x + 0.5, y + 0.5, z + 0.5, 4.2);
+          return;
+        }
         this.spawnPoint.set(x + 0.5, y + 0.6, z + 0.5);
         this.unlockAdvancement('sweet_dreams', 'Sweet Dreams', 'Set your respawn point on a bed');
         const isNight = this.dayTime >= 12500 || this.dayTime < 1000;
@@ -1598,6 +1850,15 @@ export class MinecraftEngine {
         this.world.setBlock(x, y, z, nextDoor);
         soundEngine.playDoorToggle();
         this.triggerSwing();
+        return;
+      }
+      if (blockId === BlockId.LeverOff || blockId === BlockId.LeverOn) {
+        const nextLever = blockId === BlockId.LeverOff ? BlockId.LeverOn : BlockId.LeverOff;
+        this.world.setBlock(x, y, z, nextLever);
+        soundEngine.playClick();
+        this.triggerSwing();
+        this.recalculateRedstone(x, y, z);
+        this.syncHud();
         return;
       }
       if (blockId === BlockId.Furnace) {
@@ -1626,6 +1887,7 @@ export class MinecraftEngine {
       }
       if (blockId === BlockId.Tnt) {
         this.world.setBlock(x, y, z, BlockId.Air);
+        this.enqueueFluidAround(x, y, z);
         this.igniteTnt(x + 0.5, y, z + 0.5);
         if (held?.id === 'flint_and_steel') this.damageToolInHand();
         return;
@@ -1636,10 +1898,11 @@ export class MinecraftEngine {
     const itemDef = ITEMS[held.id];
 
     // 2. Eat Food
-    if (itemDef.foodHunger && this.gameMode === 'survival' && this.hunger < this.maxHunger) {
+    if (itemDef.foodHunger && this.isSurvivalLike() && this.hunger < this.maxHunger) {
       this.hunger = Math.min(this.maxHunger, this.hunger + itemDef.foodHunger);
       this.saturation = Math.min(this.hunger, this.saturation + (itemDef.foodSaturation ?? 2));
       soundEngine.playEat();
+      this.eatAnimTimer = 0.42;
       this.triggerSwing();
       held.count -= 1;
       if (held.count <= 0) this.hotbar[this.selectedHotbar] = null;
@@ -1664,7 +1927,7 @@ export class MinecraftEngine {
         vel: dir.multiplyScalar(22),
         age: 0,
       });
-      if (this.gameMode === 'survival') {
+      if (this.isSurvivalLike()) {
         held.count -= 1;
         if (held.count <= 0) this.hotbar[this.selectedHotbar] = null;
         this.updateHeldItemAppearance();
@@ -1694,11 +1957,33 @@ export class MinecraftEngine {
         this.world.setBlock(x, y + 1, z, BlockId.WheatCrop0);
         soundEngine.playBlockPlace('leaves');
         this.triggerSwing();
-        if (this.gameMode === 'survival') {
+        if (this.isSurvivalLike()) {
           held.count -= 1;
           if (held.count <= 0) this.hotbar[this.selectedHotbar] = null;
           this.updateHeldItemAppearance();
         }
+        this.syncHud();
+        return;
+      }
+    }
+
+    // 2.75 Place Redstone Dust Wire
+    if (held.id === 'redstone' && this.currentTarget) {
+      const px = this.currentTarget.x + this.currentTarget.nx;
+      const py = this.currentTarget.y + this.currentTarget.ny;
+      const pz = this.currentTarget.z + this.currentTarget.nz;
+      const below = this.world.getBlock(px, py - 1, pz);
+      const targetAtPlace = this.world.getBlock(px, py, pz);
+      if (py > 0 && py < CHUNK_HEIGHT && targetAtPlace === BlockId.Air && BLOCKS[below].solid) {
+        this.world.setBlock(px, py, pz, BlockId.RedstoneWire);
+        soundEngine.playBlockPlace('stone');
+        this.triggerSwing();
+        if (this.isSurvivalLike()) {
+          held.count -= 1;
+          if (held.count <= 0) this.hotbar[this.selectedHotbar] = null;
+          this.updateHeldItemAppearance();
+        }
+        this.recalculateRedstone(px, py, pz);
         this.syncHud();
         return;
       }
@@ -1713,7 +1998,7 @@ export class MinecraftEngine {
         this.spawnParticles(new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5), 0x86efac, 10);
         soundEngine.playXpOrb();
         this.triggerSwing();
-        if (this.gameMode === 'survival') {
+        if (this.isSurvivalLike()) {
           held.count -= 1;
           if (held.count <= 0) this.hotbar[this.selectedHotbar] = null;
           this.updateHeldItemAppearance();
@@ -1726,7 +2011,7 @@ export class MinecraftEngine {
         this.spawnParticles(new THREE.Vector3(x + 0.5, y + 1, z + 0.5), 0x86efac, 14);
         soundEngine.playLevelUp();
         this.triggerSwing();
-        if (this.gameMode === 'survival') {
+        if (this.isSurvivalLike()) {
           held.count -= 1;
           if (held.count <= 0) this.hotbar[this.selectedHotbar] = null;
           this.updateHeldItemAppearance();
@@ -1736,13 +2021,22 @@ export class MinecraftEngine {
       }
     }
 
-    // 2.9 Flint & Steel sparks
+    // 2.9 Flint & Steel -> Ignite Nether Portal or sparks
     if (held.id === 'flint_and_steel' && this.currentTarget) {
-      const { x, y, z } = this.currentTarget;
-      this.spawnParticles(new THREE.Vector3(x + 0.5, y + 1.1, z + 0.5), 0xf97316, 12);
-      soundEngine.playClick();
+      const fx = this.currentTarget.x + this.currentTarget.nx;
+      const fy = this.currentTarget.y + this.currentTarget.ny;
+      const fz = this.currentTarget.z + this.currentTarget.nz;
+      const litPortal = this.tryIgniteNetherPortal(fx, fy, fz);
+      this.spawnParticles(
+        new THREE.Vector3(fx + 0.5, fy + 0.5, fz + 0.5),
+        litPortal ? 0xc084fc : 0xf97316,
+        litPortal ? 22 : 12
+      );
+      if (litPortal) soundEngine.playEnchant();
+      else soundEngine.playClick();
       this.triggerSwing();
       this.damageToolInHand();
+      this.syncHud();
       return;
     }
 
@@ -1771,16 +2065,45 @@ export class MinecraftEngine {
       return;
     }
 
+    // 3.5 Empty Bucket -> Scoop Water or Lava source block
+    if (held.id === 'bucket') {
+      const eye = _vec3.set(this.playerPos.x, this.playerPos.y + 1.62, this.playerPos.z);
+      _dir.set(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
+      const liquidHit = this.world.raycastVoxel(eye, _dir, 5.2, true);
+      if (
+        liquidHit &&
+        (liquidHit.blockId === BlockId.Water || liquidHit.blockId === BlockId.Lava) &&
+        this.world.getFluidLevel(liquidHit.x, liquidHit.y, liquidHit.z) === 0
+      ) {
+        const filledId: ItemId = liquidHit.blockId === BlockId.Water ? 'water_bucket' : 'lava_bucket';
+        this.world.setBlock(liquidHit.x, liquidHit.y, liquidHit.z, BlockId.Air);
+        this.enqueueFluidAround(liquidHit.x, liquidHit.y, liquidHit.z);
+        soundEngine.playBlockPlace('water');
+        this.triggerSwing();
+        if (held.count > 1) {
+          held.count -= 1;
+          this.giveItem(filledId, 1);
+        } else {
+          this.hotbar[this.selectedHotbar] = { id: filledId, count: 1 };
+        }
+        this.updateHeldItemAppearance();
+        this.syncHud();
+        return;
+      }
+    }
+
     // 4. Water / Lava Bucket
     if ((held.id === 'water_bucket' || held.id === 'lava_bucket') && this.currentTarget) {
       const px = this.currentTarget.x + this.currentTarget.nx;
       const py = this.currentTarget.y + this.currentTarget.ny;
       const pz = this.currentTarget.z + this.currentTarget.nz;
+      if (py <= 0 || py >= CHUNK_HEIGHT) return;
       const fluid = held.id === 'water_bucket' ? BlockId.Water : BlockId.Lava;
-      this.world.setBlock(px, py, pz, fluid);
+      this.world.setBlock(px, py, pz, fluid, true, 0);
+      this.enqueueFluidAround(px, py, pz);
       soundEngine.playBlockPlace('water');
       this.triggerSwing();
-      if (this.gameMode === 'survival') {
+      if (this.isSurvivalLike()) {
         this.hotbar[this.selectedHotbar] = { id: 'bucket', count: 1 };
         this.updateHeldItemAppearance();
       }
@@ -1816,10 +2139,14 @@ export class MinecraftEngine {
       }
 
       this.world.setBlock(px, py, pz, itemDef.blockId);
+      this.enqueueFluidAround(px, py, pz);
+      if (this.isRedstoneRelatedBlock(itemDef.blockId)) {
+        this.recalculateRedstone(px, py, pz);
+      }
       soundEngine.playBlockPlace(BLOCKS[itemDef.blockId].soundGroup);
       this.triggerSwing();
 
-      if (this.gameMode === 'survival') {
+      if (this.isSurvivalLike()) {
         held.count -= 1;
         if (held.count <= 0) {
           this.hotbar[this.selectedHotbar] = null;
@@ -1896,8 +2223,9 @@ export class MinecraftEngine {
 
     // Damage player & mobs in blast radius
     const pDist = this.playerPos.distanceTo(new THREE.Vector3(cx, cy, cz));
-    if (pDist < radius * 1.8 && this.gameMode === 'survival') {
-      const dmg = Math.max(1, Math.round((1 - pDist / (radius * 1.8)) * 18));
+    if (pDist < radius * 1.8 && this.isSurvivalLike()) {
+      const scale = this.gameMode === 'hardcore' ? 1.45 : 1;
+      const dmg = Math.max(1, Math.round((1 - pDist / (radius * 1.8)) * 18 * scale));
       this.applyPlayerDamage(dmg);
     }
 
@@ -1924,7 +2252,8 @@ export class MinecraftEngine {
     }
 
     const eye = _vec3.set(this.playerPos.x, this.playerPos.y + 1.62, this.playerPos.z);
-    _dir.set(0, 0, -1).applyEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
+    _euler.set(this.pitch, this.yaw, 0, 'YXZ');
+    _dir.set(0, 0, -1).applyEuler(_euler);
 
     const hit = this.world.raycastVoxel(eye, _dir, 5.2);
     this.currentTarget = hit;
@@ -1938,7 +2267,7 @@ export class MinecraftEngine {
       return;
     }
 
-    if (!this.mouseLeftDown && !this.touchMineHeld) {
+    if (this.gameMode === 'spectator' || (!this.mouseLeftDown && !this.touchMineHeld)) {
       this.resetMining();
       return;
     }
@@ -1993,17 +2322,28 @@ export class MinecraftEngine {
   private breakBlockAt(x: number, y: number, z: number, blockId: BlockId, dropLoot: boolean) {
     const def = BLOCKS[blockId];
     this.world.setBlock(x, y, z, BlockId.Air);
+    this.enqueueFluidAround(x, y, z);
+    if (blockId === BlockId.Obsidian) {
+      this.breakAdjacentPortalBlocks(x, y, z);
+    }
+    if (this.isRedstoneRelatedBlock(blockId)) {
+      this.recalculateRedstone(x, y, z);
+    }
     soundEngine.playBlockBreak(def.soundGroup);
 
     const particleCol =
       blockId === BlockId.GrassBlock || blockId === BlockId.OakLeaves
         ? 0x559e3c
-        : blockId === BlockId.Sand
-          ? 0xdbd29c
-          : blockId === BlockId.OakLog || blockId === BlockId.OakPlanks
-            ? 0x8f6e3f
-            : 0x7f7f7f;
-    this.spawnParticles(new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5), particleCol, 10);
+        : blockId === BlockId.CherryLeaves
+          ? 0xf7b2cc
+          : blockId === BlockId.Sand
+            ? 0xdbd29c
+            : blockId === BlockId.OakLog || blockId === BlockId.OakPlanks
+              ? 0x8f6e3f
+              : blockId === BlockId.AmethystBlock
+                ? 0xa371e3
+                : 0x7f7f7f;
+    this.spawnParticles(_vec3c.set(x + 0.5, y + 0.5, z + 0.5), particleCol, 10);
 
     // Drop chest contents if breaking chest
     const key = `${x},${y},${z}`;
@@ -2028,11 +2368,16 @@ export class MinecraftEngine {
     }
 
     const heldId = this.hotbar[this.selectedHotbar]?.id ?? null;
-    if (blockId === BlockId.OakLeaves || blockId === BlockId.BirchLeaves || blockId === BlockId.SpruceLeaves) {
+    if (
+      blockId === BlockId.OakLeaves ||
+      blockId === BlockId.BirchLeaves ||
+      blockId === BlockId.SpruceLeaves ||
+      blockId === BlockId.CherryLeaves
+    ) {
       const r = Math.random();
-      if (r < 0.06) this.spawnDroppedItem({ id: BLOCK_ITEM(BlockId.OakSapling), count: 1 }, new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5));
-      else if (r < 0.14) this.spawnDroppedItem({ id: 'apple', count: 1 }, new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5));
-      else if (r < 0.24) this.spawnDroppedItem({ id: 'stick', count: 1 }, new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5));
+      if (r < 0.06) this.spawnDroppedItem({ id: BLOCK_ITEM(BlockId.OakSapling), count: 1 }, _vec3c.set(x + 0.5, y + 0.5, z + 0.5));
+      else if (r < 0.14) this.spawnDroppedItem({ id: 'apple', count: 1 }, _vec3c.set(x + 0.5, y + 0.5, z + 0.5));
+      else if (r < 0.24) this.spawnDroppedItem({ id: 'stick', count: 1 }, _vec3c.set(x + 0.5, y + 0.5, z + 0.5));
       return;
     }
 
@@ -2082,10 +2427,21 @@ export class MinecraftEngine {
     return total;
   }
 
-  private applyPlayerDamage(rawAmount: number) {
-    if (this.gameMode !== 'survival' || this.phase !== 'playing') return;
+  private applyPlayerDamage(rawAmount: number, canShieldBlock = true) {
+    if (!this.isSurvivalLike() || this.phase !== 'playing') return;
+    let effective = rawAmount;
+    if (canShieldBlock && this.getIsBlocking()) {
+      effective = Math.floor(rawAmount * 0.2);
+      soundEngine.playDigTick('wood');
+      this.damageToolInHand();
+      if (effective <= 0) {
+        this.cameraShake = 0.08;
+        this.syncHud();
+        return;
+      }
+    }
     const def = this.getArmorDefense();
-    const mitigated = Math.max(1, Math.round(rawAmount * (1 - Math.min(0.8, def * 0.032))));
+    const mitigated = Math.max(1, Math.round(effective * (1 - Math.min(0.8, def * 0.032))));
     this.health = Math.max(0, this.health - mitigated);
     this.damageFlash = 0.45;
     this.cameraShake = 0.3;
@@ -2105,7 +2461,7 @@ export class MinecraftEngine {
 
     const lockedControl = this.activeContainer === 'none';
     if (lockedControl) {
-      const lookSpeed = 2.0 * this.options.mouseSensitivity;
+      const lookSpeed = 2.0 * this.options.mouseSensitivity * (this.getIsSpyglassZoom() ? 0.35 : 1.0);
       if (this.heldKeys.has('ArrowLeft')) this.yaw += lookSpeed * dt;
       if (this.heldKeys.has('ArrowRight')) this.yaw -= lookSpeed * dt;
       if (this.heldKeys.has('ArrowUp')) this.pitch = Math.min(Math.PI / 2 - 0.01, this.pitch + lookSpeed * dt);
@@ -2123,13 +2479,14 @@ export class MinecraftEngine {
       fwdInput > 0.25 &&
       !this.isSneaking &&
       (this.heldKeys.has('ControlLeft') || this.heldKeys.has('KeyR') || this.touchSprintToggle) &&
-      (this.gameMode === 'creative' || this.hunger > 6);
+      (!this.isSurvivalLike() || this.hunger > 6);
     this.isSprinting = wantsSprint;
 
-    // Smooth FOV sprint widening
-    const targetFov = this.isSprinting ? this.options.fov + 8 : this.options.fov;
+    // Smooth FOV sprint widening & Spyglass optical zoom
+    const isZoom = this.getIsSpyglassZoom();
+    const targetFov = isZoom ? 22 : this.isSprinting ? this.options.fov + 8 : this.options.fov;
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
-      this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, 10, dt);
+      this.camera.fov = THREE.MathUtils.damp(this.camera.fov, targetFov, isZoom ? 16 : 10, dt);
       this.camera.updateProjectionMatrix();
     }
 
@@ -2152,7 +2509,10 @@ export class MinecraftEngine {
     const inLava = feetBlock === BlockId.Lava || headBlock === BlockId.Lava;
     const onLadder = feetBlock === BlockId.Ladder;
 
-    const baseSpeed = this.isFlying ? 11.5 : this.isSneaking ? 2.1 : this.isSprinting ? 6.2 : 4.4;
+    // 1.13+ Update Aquatic 3D Sprint-Swimming
+    this.isSwimming = !this.isFlying && inWater && this.isSprinting && fwdInput > 0.25;
+
+    const baseSpeed = this.isFlying ? 11.5 : this.isSwimming ? 6.8 : this.isSneaking ? 2.1 : this.isSprinting ? 6.2 : 4.4;
     const targetVx = moveX * baseSpeed;
     const targetVz = moveZ * baseSpeed;
     const accel = this.onGround || this.isFlying ? 18 : 6;
@@ -2168,6 +2528,10 @@ export class MinecraftEngine {
       this.playerVel.y = THREE.MathUtils.damp(this.playerVel.y, targetVy, 12, dt);
     } else if (onLadder) {
       this.playerVel.y = wantsJump ? 3.5 : fwdInput > 0 ? 3.2 : -1.5;
+    } else if (this.isSwimming) {
+      const swimPitchVy = Math.sin(this.pitch) * 6.4;
+      this.playerVel.y = THREE.MathUtils.damp(this.playerVel.y, wantsJump ? Math.max(3.5, swimPitchVy) : swimPitchVy, 10, dt);
+      this.fallStartY = this.playerPos.y;
     } else if (inWater) {
       this.playerVel.y -= 7 * dt;
       if (wantsJump) {
@@ -2281,7 +2645,7 @@ export class MinecraftEngine {
         if (this.wasFalling && !this.isFlying && !inWater) {
           const fallDist = this.fallStartY - this.playerPos.y;
           if (fallDist > 3.5) {
-            this.applyPlayerDamage(Math.floor(fallDist - 3));
+            this.applyPlayerDamage(Math.floor(fallDist - 3), false);
           }
         }
         this.wasFalling = false;
@@ -2289,9 +2653,11 @@ export class MinecraftEngine {
       this.playerVel.y = 0;
     }
 
-    // Footsteps & headbob
+    // Footsteps & headbob (plus swimming stroke rhythm)
     const horizSpeed = Math.hypot(this.playerVel.x, this.playerVel.z);
-    if (this.onGround && horizSpeed > 0.6 && !this.isFlying) {
+    if (this.isSwimming) {
+      this.walkBobPhase += dt * Math.max(4.5, horizSpeed * 1.9);
+    } else if (this.onGround && horizSpeed > 0.6 && !this.isFlying) {
       this.walkBobPhase += dt * horizSpeed * 2.2;
       this.stepAccum += horizSpeed * dt;
       if (this.stepAccum > 1.9) {
@@ -2303,8 +2669,23 @@ export class MinecraftEngine {
       }
     }
 
+    // Nether Portal teleport charging
+    if (this.portalCooldown > 0) {
+      this.portalCooldown = Math.max(0, this.portalCooldown - dt);
+      this.portalCharge = 0;
+    } else if (feetBlock === BlockId.NetherPortal || headBlock === BlockId.NetherPortal) {
+      this.portalCharge = Math.min(1, this.portalCharge + dt / (this.gameMode === 'creative' ? 0.35 : 1.4));
+      if (this.portalCharge >= 1) {
+        this.portalCharge = 0;
+        this.switchDimension(this.currentDimension === 'overworld' ? 'nether' : 'overworld');
+        return;
+      }
+    } else {
+      this.portalCharge = Math.max(0, this.portalCharge - dt * 1.5);
+    }
+
     // Survival vitals: underwater air, lava, hunger & natural healing
-    if (this.gameMode === 'survival') {
+    if (this.isSurvivalLike()) {
       if (headBlock === BlockId.Water) {
         this.air = Math.max(0, this.air - dt * 1.3);
         if (this.air <= 0) {
@@ -2376,7 +2757,8 @@ export class MinecraftEngine {
   }
 
   private updateMobs(dt: number) {
-    const isNight = this.dayTime > 13000 && this.dayTime < 23000;
+    const isNight = this.currentDimension === 'nether' || (this.dayTime > 13000 && this.dayTime < 23000);
+    const dmgScale = this.gameMode === 'hardcore' ? 1.45 : 1.0;
 
     // Periodic spawning around player
     this.mobSpawnTimer -= dt;
@@ -2389,10 +2771,15 @@ export class MinecraftEngine {
       const sy = this.world.getTopSolidY(sx, sz);
       const ground = this.world.getBlock(sx, sy - 1, sz);
       if (ground !== BlockId.Water && ground !== BlockId.Lava && ground !== BlockId.Air) {
-        const spawnHostile = isNight && this.gameMode === 'survival' && Math.random() < 0.72;
-        const pool: MobType[] = spawnHostile
-          ? ['zombie', 'skeleton', 'creeper', 'spider', 'enderman']
-          : ['sheep', 'cow', 'pig'];
+        const spawnHostile =
+          (this.currentDimension === 'nether' || (isNight && Math.random() < 0.72)) &&
+          this.isSurvivalLike();
+        const pool: MobType[] =
+          this.currentDimension === 'nether'
+            ? ['skeleton', 'enderman', 'zombie']
+            : spawnHostile
+              ? ['zombie', 'skeleton', 'creeper', 'spider', 'enderman']
+              : ['sheep', 'cow', 'pig'];
         const type = pool[Math.floor(Math.random() * pool.length)];
         const mob = createMobEntity(this.nextEntityId++, type, new THREE.Vector3(sx + 0.5, sy, sz + 0.5));
         this.scene.add(mob.group);
@@ -2414,8 +2801,8 @@ export class MinecraftEngine {
         mob.bodyMaterials.forEach((m) => m.emissive.setHex(mob.hurtFlash > 0 ? 0xaa1111 : 0x000000));
       }
 
-      // Daylight burn for Zombies & Skeletons
-      if (!isNight && (mob.type === 'zombie' || mob.type === 'skeleton') && this.weather === 'clear') {
+      // Daylight burn for Zombies & Skeletons in Overworld
+      if (this.currentDimension === 'overworld' && !isNight && (mob.type === 'zombie' || mob.type === 'skeleton') && this.weather === 'clear') {
         const topY = this.world.getTopSolidY(Math.floor(mob.pos.x), Math.floor(mob.pos.z));
         if (mob.pos.y + 1.5 >= topY - 1) {
           mob.hurtFlash = 0.15;
@@ -2445,7 +2832,7 @@ export class MinecraftEngine {
       const toPlayerZ = this.playerPos.z - mob.pos.z;
       const horizDist = Math.hypot(toPlayerX, toPlayerZ);
 
-      if (mob.hostile && this.gameMode === 'survival' && this.phase === 'playing' && horizDist < 18) {
+      if (mob.hostile && this.isSurvivalLike() && this.phase === 'playing' && horizDist < 18) {
         mob.yaw = Math.atan2(toPlayerX, toPlayerZ);
 
         if (mob.type === 'creeper') {
@@ -2517,7 +2904,7 @@ export class MinecraftEngine {
           }
           if (horizDist < 1.65 && Math.abs(this.playerPos.y - mob.pos.y) < 1.6 && mob.attackCooldown <= 0) {
             mob.attackCooldown = 0.95;
-            this.applyPlayerDamage(2);
+            this.applyPlayerDamage(Math.round(2 * dmgScale));
           }
         } else if (mob.type === 'enderman') {
           if (horizDist < 11) {
@@ -2526,7 +2913,7 @@ export class MinecraftEngine {
             mob.isMoving = true;
             if (horizDist < 1.85 && Math.abs(this.playerPos.y - mob.pos.y) < 2.2 && mob.attackCooldown <= 0) {
               mob.attackCooldown = 1.2;
-              this.applyPlayerDamage(5);
+              this.applyPlayerDamage(Math.round(5 * dmgScale));
             }
           } else {
             mob.vel.x *= 0.85;
@@ -2540,7 +2927,7 @@ export class MinecraftEngine {
           mob.isMoving = true;
           if (horizDist < 1.65 && Math.abs(this.playerPos.y - mob.pos.y) < 1.8 && mob.attackCooldown <= 0) {
             mob.attackCooldown = 1.1;
-            this.applyPlayerDamage(3);
+            this.applyPlayerDamage(Math.round(3 * dmgScale));
           }
         }
       } else {
@@ -2608,7 +2995,8 @@ export class MinecraftEngine {
       // Magnetic pickup toward player
       const dist = d.pos.distanceTo(this.playerPos);
       if (this.phase === 'playing' && d.pickupDelay <= 0 && dist < 2.2) {
-        d.pos.lerp(new THREE.Vector3(this.playerPos.x, this.playerPos.y + 0.8, this.playerPos.z), Math.min(1, dt * 10));
+        _vec3.set(this.playerPos.x, this.playerPos.y + 0.8, this.playerPos.z);
+        d.pos.lerp(_vec3, Math.min(1, dt * 10));
         if (dist < 1.15 && this.giveItem(d.stack.id, d.stack.count)) {
           soundEngine.playXpOrb();
           this.scene.remove(d.mesh);
@@ -2632,7 +3020,8 @@ export class MinecraftEngine {
       a.vel.y -= 14 * dt;
       a.pos.addScaledVector(a.vel, dt);
       a.mesh.position.copy(a.pos);
-      a.mesh.lookAt(a.pos.clone().add(a.vel));
+      _vec3.copy(a.pos).add(a.vel);
+      a.mesh.lookAt(_vec3);
 
       let remove = a.age > 8;
       const b = this.world.getBlock(Math.floor(a.pos.x), Math.floor(a.pos.y), Math.floor(a.pos.z));
@@ -2646,20 +3035,29 @@ export class MinecraftEngine {
             a.pos.y >= mob.pos.y &&
             a.pos.y <= mob.pos.y + mob.height
           ) {
-            this.damageMob(mob, 7, a.vel.clone().normalize());
+            _dir.copy(a.vel).normalize();
+            this.damageMob(mob, 7, _dir);
             remove = true;
             break;
           }
         }
-      } else if (!remove && !a.fromPlayer && this.gameMode === 'survival') {
+      } else if (!remove && !a.fromPlayer && this.isSurvivalLike()) {
         if (
           Math.abs(a.pos.x - this.playerPos.x) < 0.45 &&
           Math.abs(a.pos.z - this.playerPos.z) < 0.45 &&
           a.pos.y >= this.playerPos.y &&
           a.pos.y <= this.playerPos.y + 1.8
         ) {
-          this.applyPlayerDamage(3);
-          remove = true;
+          if (this.getIsBlocking()) {
+            a.vel.multiplyScalar(-0.45);
+            a.vel.y += 2;
+            a.fromPlayer = true;
+            soundEngine.playDigTick('wood');
+            this.damageToolInHand();
+          } else {
+            this.applyPlayerDamage(Math.round(3 * (this.gameMode === 'hardcore' ? 1.45 : 1)));
+            remove = true;
+          }
         }
       }
 
@@ -2715,7 +3113,7 @@ export class MinecraftEngine {
         this.fallStartY = this.playerPos.y;
         soundEngine.playTeleport();
         this.spawnParticles(this.playerPos.clone().add(new THREE.Vector3(0, 1, 0)), 0xa855f7, 16);
-        if (this.gameMode === 'survival') {
+        if (this.isSurvivalLike()) {
           this.applyPlayerDamage(5);
         }
         this.scene.remove(p.mesh);
@@ -2798,12 +3196,57 @@ export class MinecraftEngine {
   }
 
   private updateSkyAndWeather(dt: number) {
+    this.elapsedTime += dt;
     // 24000 ticks in ~12 minutes real-time (33 ticks/sec)
     this.dayTime += dt * 33;
     if (this.dayTime >= 24000) {
       this.dayTime -= 24000;
       this.dayCount += 1;
     }
+
+    // Dynamic handheld light when holding Torch, Redstone Torch, Glowstone, or Lava Bucket
+    const heldId = this.hotbar[this.selectedHotbar]?.id;
+    const emitsHeldLight =
+      heldId === BLOCK_ITEM(BlockId.Torch) ||
+      heldId === BLOCK_ITEM(BlockId.RedstoneTorch) ||
+      heldId === BLOCK_ITEM(BlockId.Glowstone) ||
+      heldId === 'lava_bucket';
+    this.heldTorchLight.position.set(this.playerPos.x, this.playerPos.y + 1.5, this.playerPos.z);
+    this.heldTorchLight.intensity = emitsHeldLight && this.phase === 'playing' ? 2.4 : 0;
+
+    if (this.currentDimension === 'nether') {
+      (this.scene.background as THREE.Color).copy(_netherSky);
+      if (this.scene.fog instanceof THREE.Fog) {
+        this.scene.fog.color.copy(_netherSky);
+        this.scene.fog.near = 14;
+        this.scene.fog.far = Math.max(36, this.options.renderDistance * 14);
+      }
+      this.sunMesh.visible = false;
+      this.moonMesh.visible = false;
+      this.starPoints.visible = false;
+      this.cloudGroup.visible = false;
+      this.rainPoints.visible = false;
+      this.sunLight.intensity = 0.35;
+      this.hemiLight.intensity = 0.58;
+      this.hemiLight.color.setHex(0xc96b58);
+      this.hemiLight.groundColor.setHex(0x2a0808);
+      _sunDir.set(0, 1, 0);
+      this.world.setRenderSettings(
+        this.options.graphicsQuality,
+        this.options.leafQuality,
+        _sunDir,
+        _netherSky,
+        this.elapsedTime
+      );
+      return;
+    }
+
+    this.hemiLight.color.setHex(0xd9ecff);
+    this.hemiLight.groundColor.setHex(0x453b31);
+    this.sunMesh.visible = true;
+    this.moonMesh.visible = true;
+    this.starPoints.visible = true;
+    this.cloudGroup.visible = this.options.showClouds && this.options.cloudStyle !== 'off';
 
     const angle = ((this.dayTime - 6000) / 24000) * Math.PI * 2;
     const sunY = Math.cos(angle);
@@ -2826,9 +3269,12 @@ export class MinecraftEngine {
     if (this.weather === 'rain') _skyColor.lerp(_rainSky, 0.55);
 
     (this.scene.background as THREE.Color).copy(_skyColor);
+    const maxDist = Math.max(40, this.options.renderDistance * 16 + 10);
     if (this.scene.fog instanceof THREE.Fog) {
       _fogColor.copy(_skyColor);
       this.scene.fog.color.copy(_fogColor);
+      this.scene.fog.near = maxDist * 0.42;
+      this.scene.fog.far = maxDist;
     }
 
     const rainDim = this.weather === 'rain' ? 0.65 : 1.0;
@@ -2837,24 +3283,47 @@ export class MinecraftEngine {
     (this.starPoints.material as THREE.PointsMaterial).opacity = Math.max(0, 1 - daylight * 1.6);
     this.starPoints.position.copy(anchor);
 
-    // Dynamic cloud tint matching Java Edition sky phases
-    this.cloudMat.color.setHex(0x232b3d).lerp(new THREE.Color(0xffffff), daylight);
-    if (sunsetBand > 0.05) this.cloudMat.color.lerp(new THREE.Color(0xffb088), sunsetBand * 0.6);
+    // Dynamic cloud tint matching Java Edition sky phases (zero allocations)
+    this.cloudMat.color.copy(_cloudNight).lerp(_cloudDay, daylight);
+    if (sunsetBand > 0.05) this.cloudMat.color.lerp(_cloudSunset, sunsetBand * 0.6);
 
-    // Dynamic handheld light when holding Torch, Glowstone, or Lava Bucket
-    const heldId = this.hotbar[this.selectedHotbar]?.id;
-    const emitsHeldLight =
-      heldId === BLOCK_ITEM(BlockId.Torch) ||
-      heldId === BLOCK_ITEM(BlockId.Glowstone) ||
-      heldId === 'lava_bucket';
-    this.heldTorchLight.position.set(this.playerPos.x, this.playerPos.y + 1.5, this.playerPos.z);
-    this.heldTorchLight.intensity = emitsHeldLight && this.phase === 'playing' ? 2.4 : 0;
+    _sunDir.set(sunX, Math.max(0.05, sunY), -0.25).normalize();
+    this.world.setRenderSettings(
+      this.options.graphicsQuality,
+      this.options.leafQuality,
+      _sunDir,
+      _skyColor,
+      this.elapsedTime
+    );
+
+    // Ambient falling cherry blossom petals in Cherry Grove biome
+    if (this.phase === 'playing') {
+      this.cherryPetalTimer -= dt;
+      if (this.cherryPetalTimer <= 0) {
+        this.cherryPetalTimer = 0.2;
+        const biome = this.world.getBiomeAt(Math.floor(this.playerPos.x), Math.floor(this.playerPos.z));
+        if (biome === 'cherry') {
+          this.spawnParticles(
+            _vec3c.set(
+              this.playerPos.x + (Math.random() - 0.5) * 14,
+              this.playerPos.y + 5 + Math.random() * 4,
+              this.playerPos.z + (Math.random() - 0.5) * 14
+            ),
+            0xf9c7db,
+            1,
+            1.4
+          );
+        }
+      }
+    }
 
     // Drift clouds gently
-    this.cloudGroup.children.forEach((c) => {
+    const clouds = this.cloudGroup.children;
+    for (let i = 0; i < clouds.length; i++) {
+      const c = clouds[i];
       c.position.x += dt * 1.1;
       if (c.position.x - this.playerPos.x > 90) c.position.x -= 180;
-    });
+    }
 
     // Rain particles
     this.rainPoints.visible = this.weather === 'rain';
@@ -2885,7 +3354,7 @@ export class MinecraftEngine {
       return;
     }
 
-    const eyeHeight = this.isSneaking ? 1.38 : 1.62;
+    const eyeHeight = this.isSneaking ? 1.38 : this.isSwimming ? 1.05 : 1.62;
     const bob =
       this.onGround && !this.isFlying && Math.hypot(this.playerVel.x, this.playerVel.z) > 0.5
         ? Math.sin(this.walkBobPhase) * 0.045
@@ -2902,13 +3371,14 @@ export class MinecraftEngine {
     if (this.cameraMode === 0) {
       this.camera.position.copy(headPos);
       this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
-      this.viewModelGroup.visible = true;
+      this.viewModelGroup.visible = !this.getIsSpyglassZoom();
       this.playerModel.group.visible = false;
     } else {
       const dist = 3.8;
       const dirSign = this.cameraMode === 1 ? 1 : -1;
-      const offset = new THREE.Vector3(0, 0, dist * dirSign).applyEuler(new THREE.Euler(this.pitch * dirSign, this.yaw, 0, 'YXZ'));
-      this.camera.position.copy(headPos).add(offset);
+      _euler.set(this.pitch * dirSign, this.yaw, 0, 'YXZ');
+      _vec3b.set(0, 0, dist * dirSign).applyEuler(_euler);
+      this.camera.position.copy(headPos).add(_vec3b);
       this.camera.lookAt(headPos);
       this.viewModelGroup.visible = false;
       this.playerModel.group.visible = true;
@@ -2920,21 +3390,57 @@ export class MinecraftEngine {
       this.playerModel.legs[1].rotation.x = -legSwing;
     }
 
-    // Viewmodel swing animation
+    // Expressive Bedrock Edition "hand dancing object" viewmodel animation
+    this.idleBreathPhase += dt * 2.1;
+    this.equipProgress = Math.min(1, this.equipProgress + dt * 5.2);
+    this.sprintBlend = THREE.MathUtils.damp(this.sprintBlend, this.isSprinting ? 1 : 0, 10, dt);
+    this.lookSwayX = THREE.MathUtils.damp(this.lookSwayX, 0, 12, dt);
+    this.lookSwayY = THREE.MathUtils.damp(this.lookSwayY, 0, 12, dt);
+    if (this.eatAnimTimer > 0) {
+      this.eatAnimTimer = Math.max(0, this.eatAnimTimer - dt);
+    }
+
     if (this.isSwinging) {
-      this.swingProgress += dt * 7.5;
+      this.swingProgress += dt * 6.8;
       if (this.swingProgress >= 1) {
         this.isSwinging = false;
         this.swingProgress = 0;
       }
     }
-    const swingAngle = Math.sin(this.swingProgress * Math.PI);
+
+    const eqInv = 1 - this.equipProgress;
+    const equipDrop = eqInv * eqInv * 0.36;
+    const equipTilt = eqInv * 0.65;
+
+    const swingWave = Math.sin(this.swingProgress * Math.PI);
+    const swingSweep = Math.sin(this.swingProgress * Math.PI * 1.15);
+    const eatWave = this.eatAnimTimer > 0 ? Math.abs(Math.sin(this.eatAnimTimer * 28)) * 0.055 : 0;
+
+    // Figure-8 Bedrock walk/sprint/swim hand dance + gentle idle breathing float
+    const speedNorm = Math.min(1.3, Math.hypot(this.playerVel.x, this.playerVel.z) / 5.5);
+    const walkAmp = this.onGround || this.isSwimming ? (0.022 + this.sprintBlend * 0.018) * speedNorm : 0.006;
+    const figure8X = Math.sin(this.walkBobPhase) * walkAmp * 1.35;
+    const figure8Y = -Math.abs(Math.cos(this.walkBobPhase)) * walkAmp + Math.sin(this.idleBreathPhase) * 0.007;
+    const swimRoll = this.isSwimming ? Math.sin(this.walkBobPhase) * 0.16 : 0;
+
+    const blocking = this.getIsBlocking();
+    const blockSlideX = blocking ? -0.22 : 0;
+    const blockSlideY = blocking ? 0.09 : 0;
+    const blockSlideZ = blocking ? 0.08 : 0;
+    const punchReach = this.heldMode === 'arm' ? 1.25 : this.heldMode === 'block' ? 0.85 : 1.0;
+
     this.viewModelGroup.position.set(
-      Math.cos(this.walkBobPhase * 0.5) * 0.015 - swingAngle * 0.14,
-      Math.abs(Math.sin(this.walkBobPhase)) * 0.015 - swingAngle * 0.12,
-      -swingAngle * 0.14
+      blockSlideX + figure8X + this.lookSwayX - swingSweep * 0.18 * punchReach + (this.eatAnimTimer > 0 ? -0.1 : 0),
+      blockSlideY + figure8Y + this.lookSwayY - equipDrop - swingWave * 0.13 * punchReach + eatWave - this.sprintBlend * 0.025,
+      blockSlideZ - swingWave * 0.18 * punchReach - this.sprintBlend * 0.04
     );
-    this.viewModelGroup.rotation.set(-swingAngle * 0.85, swingAngle * 0.35, 0);
+
+    const itemWristTwist = this.heldMode === 'item' ? swingSweep * 0.28 : 0;
+    this.viewModelGroup.rotation.set(
+      -swingWave * (0.9 + itemWristTwist * 0.4) - equipTilt * 0.7 - this.sprintBlend * 0.14 - this.lookSwayY * 1.4,
+      (blocking ? 0.42 : swingSweep * 0.45 * punchReach) + this.lookSwayX * 1.6,
+      (blocking ? 0.28 : swingSweep * 0.24 + itemWristTwist) + swimRoll + Math.sin(this.walkBobPhase) * 0.045 * speedNorm
+    );
   }
 
   private streamChunksAroundPlayer() {
@@ -2942,13 +3448,29 @@ export class MinecraftEngine {
     const pcz = Math.floor(this.playerPos.z / CHUNK_SIZE);
     const r = this.options.renderDistance;
 
+    // Collect only missing chunks sorted closest-first and enforce a 4.0ms generation + meshing budget
+    const missing: { cx: number; cz: number; d2: number }[] = [];
     for (let dx = -r; dx <= r; dx++) {
       for (let dz = -r; dz <= r; dz++) {
-        this.world.ensureChunk(pcx + dx, pcz + dz);
+        const cx = pcx + dx;
+        const cz = pcz + dz;
+        if (!this.world.chunks.has(`${cx},${cz}`)) {
+          missing.push({ cx, cz, d2: dx * dx + dz * dz });
+        }
       }
     }
-    this.populatePendingStructureChests();
-    this.world.updateDirtyChunks(this.isSoftwareGl ? 2 : 3);
+    if (missing.length > 0) {
+      missing.sort((a, b) => a.d2 - b.d2);
+      const start = performance.now();
+      const maxGen = this.isSoftwareGl ? 1 : 2;
+      for (let i = 0; i < missing.length && i < maxGen; i++) {
+        this.world.ensureChunk(missing[i].cx, missing[i].cz);
+        if (performance.now() - start > 3.5) break;
+      }
+      this.populatePendingStructureChests();
+    }
+
+    this.world.updateDirtyChunks(this.isSoftwareGl ? 1 : 2, pcx, pcz, 4.0);
     this.world.pruneFarChunks(pcx, pcz, r);
   }
 
@@ -2978,6 +3500,8 @@ export class MinecraftEngine {
       xpProgress: this.xpProgress,
       score: this.score,
       gameMode: this.gameMode,
+      dimension: this.currentDimension,
+      portalCharge: this.portalCharge,
       selectedHotbar: this.selectedHotbar,
       hotbar: this.hotbar.map((s) => (s ? { ...s } : null)),
       inventory: this.inventory.map((s) => (s ? { ...s } : null)),
@@ -2992,6 +3516,13 @@ export class MinecraftEngine {
       isSneaking: this.isSneaking || this.touchSneakToggle,
       isUnderwater: headB === BlockId.Water,
       isInLava: feetB === BlockId.Lava || headB === BlockId.Lava,
+      isSwimming: this.isSwimming,
+      isBlocking: this.getIsBlocking(),
+      isSpyglassZoom: this.getIsSpyglassZoom(),
+      attackCharge:
+        this.attackCooldownMax > 0
+          ? THREE.MathUtils.clamp(1 - this.attackCooldown / this.attackCooldownMax, 0, 1)
+          : 1,
       damageFlash: this.damageFlash,
       advancements: Array.from(this.unlockedAdvancements),
       targetBlock: this.currentTarget
@@ -3067,16 +3598,20 @@ export class MinecraftEngine {
       }
 
       if (this.rightClickCooldown > 0) this.rightClickCooldown -= dt;
+      if (this.attackCooldown > 0) this.attackCooldown = Math.max(0, this.attackCooldown - dt);
       if (this.damageFlash > 0) this.damageFlash = Math.max(0, this.damageFlash - dt * 1.4);
 
       if (this.phase === 'playing') {
         this.streamChunksAroundPlayer();
+        this.updateFluids(dt);
         this.updatePlayerPhysics(dt);
         this.updateBlockTargetAndMining(dt);
         this.updateMobs(dt);
         this.updateEntitiesAndFx(dt);
         this.updateFurnaces(dt);
         this.updateCropAndSaplingTicks(dt);
+      } else if (this.phase === 'title') {
+        this.streamChunksAroundPlayer();
       }
 
       this.updateSkyAndWeather(dt);
@@ -3098,5 +3633,606 @@ export class MinecraftEngine {
 
     if (this.isSoftwareGl) afterDraw(tick);
     else this.frameId = requestAnimationFrame(tick);
+  }
+
+  // ==================== WATER & LAVA FLOW PHYSICS ====================
+  private enqueueFluidAround(wx: number, wy: number, wz: number) {
+    const offsets: [number, number, number][] = [
+      [0, 0, 0],
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 1, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+    ];
+    for (const [dx, dy, dz] of offsets) {
+      const nx = wx + dx;
+      const ny = wy + dy;
+      const nz = wz + dz;
+      if (ny <= 0 || ny >= CHUNK_HEIGHT) continue;
+      const b = this.world.getBlock(nx, ny, nz);
+      if (b === BlockId.Water || b === BlockId.Lava) {
+        this.activeFluidCells.add(`${nx},${ny},${nz}`);
+      }
+    }
+  }
+
+  private canFluidDisplace(b: BlockId): boolean {
+    if (b === BlockId.Air) return true;
+    return (
+      b === BlockId.TallGrass ||
+      b === BlockId.Dandelion ||
+      b === BlockId.Poppy ||
+      b === BlockId.OakSapling ||
+      b === BlockId.WheatCrop0 ||
+      b === BlockId.WheatCrop1 ||
+      b === BlockId.WheatCrop2 ||
+      b === BlockId.WheatCrop3 ||
+      b === BlockId.Torch ||
+      b === BlockId.RedstoneTorch ||
+      b === BlockId.RedstoneWire ||
+      b === BlockId.RedstoneWireOn
+    );
+  }
+
+  private findDropDistance(sx: number, sy: number, sz: number, fluidId: BlockId, maxSearch = 2): number {
+    // BFS over passable horizontal tiles up to maxSearch steps to find nearest downward drop
+    const visited = new Set<string>();
+    const queue: [number, number, number][] = [[sx, sz, 1]];
+    visited.add(`${sx},${sz}`);
+    const dirs = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ];
+
+    while (queue.length > 0) {
+      const [cx, cz, dist] = queue.shift()!;
+      const below = this.world.getBlock(cx, sy - 1, cz);
+      if (this.canFluidDisplace(below) || below === fluidId) {
+        return dist;
+      }
+      if (dist >= maxSearch) continue;
+      for (const [dx, dz] of dirs) {
+        const nx = cx + dx;
+        const nz = cz + dz;
+        const k = `${nx},${nz}`;
+        if (visited.has(k)) continue;
+        visited.add(k);
+        const nb = this.world.getBlock(nx, sy, nz);
+        if (this.canFluidDisplace(nb)) {
+          queue.push([nx, nz, dist + 1]);
+        }
+      }
+    }
+    return 99;
+  }
+
+  private stepFluidType(fluidId: BlockId.Water | BlockId.Lava, maxDist: number) {
+    const batch = Array.from(this.activeFluidCells);
+    if (batch.length === 0) return;
+
+    const dirs: [number, number][] = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ];
+    const oppositeFluid = fluidId === BlockId.Water ? BlockId.Lava : BlockId.Water;
+    let ops = 0;
+
+    for (const key of batch) {
+      if (ops > 180) break;
+      const [x, y, z] = key.split(',').map(Number);
+      const b = this.world.getBlock(x, y, z);
+      if (b !== fluidId) {
+        if (b !== BlockId.Water && b !== BlockId.Lava) {
+          this.activeFluidCells.delete(key);
+        }
+        continue;
+      }
+
+      // 1. Water <-> Lava reaction
+      let reacted = false;
+      const adjChecks: [number, number, number][] = [
+        [x + 1, y, z],
+        [x - 1, y, z],
+        [x, y, z + 1],
+        [x, y, z - 1],
+        [x, y - 1, z],
+        [x, y + 1, z],
+      ];
+      for (const [ax, ay, az] of adjChecks) {
+        if (this.world.getBlock(ax, ay, az) === oppositeFluid) {
+          if (fluidId === BlockId.Water) {
+            const lavaLvl = this.world.getFluidLevel(ax, ay, az);
+            this.world.setBlock(ax, ay, az, lavaLvl === 0 ? BlockId.Obsidian : BlockId.Cobblestone);
+            this.enqueueFluidAround(ax, ay, az);
+          } else if (ay === y - 1) {
+            this.world.setBlock(ax, ay, az, BlockId.Stone);
+            this.enqueueFluidAround(ax, ay, az);
+          } else {
+            const myLvl = this.world.getFluidLevel(x, y, z);
+            this.world.setBlock(x, y, z, myLvl === 0 ? BlockId.Obsidian : BlockId.Cobblestone);
+            this.enqueueFluidAround(x, y, z);
+            reacted = true;
+          }
+          this.spawnParticles(new THREE.Vector3(ax + 0.5, ay + 0.9, az + 0.5), 0xd4d4d8, 5);
+          soundEngine.playDigTick('stone');
+          ops++;
+        }
+      }
+      if (reacted) continue;
+
+      let lvl = this.world.getFluidLevel(x, y, z);
+
+      // Infinite water source creation: 2 orthogonal Water sources + solid/water below
+      if (fluidId === BlockId.Water && lvl > 0 && lvl < 8) {
+        let adjSources = 0;
+        for (const [dx, dz] of dirs) {
+          if (
+            this.world.getBlock(x + dx, y, z + dz) === BlockId.Water &&
+            this.world.getFluidLevel(x + dx, y, z + dz) === 0
+          ) {
+            adjSources++;
+          }
+        }
+        const under = this.world.getBlock(x, y - 1, z);
+        if (adjSources >= 2 && (BLOCKS[under].solid || (under === BlockId.Water && this.world.getFluidLevel(x, y - 1, z) === 0))) {
+          this.world.setFluidLevel(x, y, z, 0);
+          lvl = 0;
+        }
+      }
+
+      // 2. Validate flowing cell upstream feed
+      if (lvl > 0) {
+        const above = this.world.getBlock(x, y + 1, z);
+        if (lvl === 8) {
+          if (above !== fluidId) {
+            this.world.setBlock(x, y, z, BlockId.Air);
+            this.activeFluidCells.delete(key);
+            this.enqueueFluidAround(x, y, z);
+            ops++;
+            continue;
+          }
+        } else if (above === fluidId) {
+          this.world.setFluidLevel(x, y, z, 8);
+          lvl = 8;
+        } else {
+          let bestFeeder = 99;
+          for (const [dx, dz] of dirs) {
+            if (this.world.getBlock(x + dx, y, z + dz) === fluidId) {
+              const nLvl = this.world.getFluidLevel(x + dx, y, z + dz);
+              const eff = nLvl === 8 ? 0 : nLvl;
+              if (eff < bestFeeder) bestFeeder = eff;
+            }
+          }
+          const expectedLvl = bestFeeder + 1;
+          if (expectedLvl > maxDist) {
+            this.world.setBlock(x, y, z, BlockId.Air);
+            this.activeFluidCells.delete(key);
+            this.enqueueFluidAround(x, y, z);
+            ops++;
+            continue;
+          } else if (expectedLvl !== lvl) {
+            this.world.setFluidLevel(x, y, z, expectedLvl);
+            lvl = expectedLvl;
+            this.enqueueFluidAround(x, y, z);
+          }
+        }
+      }
+
+      // 3. Downward flow (infinitely downward!)
+      let settled = true;
+      const below = y > 1 ? this.world.getBlock(x, y - 1, z) : BlockId.Bedrock;
+      const canFlowDown = y > 1 && this.canFluidDisplace(below);
+      if (canFlowDown) {
+        this.world.setBlock(x, y - 1, z, fluidId, true, 8);
+        this.activeFluidCells.add(`${x},${y - 1},${z}`);
+        settled = false;
+        ops++;
+      }
+
+      // 4. Horizontal spread (up to maxDist blocks, prioritizing drops within 2 blocks)
+      const effectiveLvl = lvl === 8 ? 0 : lvl;
+      const restingOnSolidOrFluid = !canFlowDown && !(below === fluidId && lvl === 8);
+      if (restingOnSolidOrFluid && effectiveLvl < maxDist) {
+        const candidates: { nx: number; nz: number; dropDist: number; current: BlockId }[] = [];
+        let minDrop = 99;
+        for (const [dx, dz] of dirs) {
+          const nx = x + dx;
+          const nz = z + dz;
+          const nb = this.world.getBlock(nx, y, nz);
+          if (this.canFluidDisplace(nb)) {
+            const dropDist = this.findDropDistance(nx, y, nz, fluidId, 2);
+            if (dropDist < minDrop) minDrop = dropDist;
+            candidates.push({ nx, nz, dropDist, current: nb });
+          } else if (nb === fluidId) {
+            const nLvl = this.world.getFluidLevel(nx, y, nz);
+            if (nLvl !== 8 && nLvl > effectiveLvl + 1) {
+              this.world.setFluidLevel(nx, y, nz, effectiveLvl + 1);
+              this.activeFluidCells.add(`${nx},${y},${nz}`);
+              settled = false;
+              ops++;
+            }
+          }
+        }
+
+        const nextLvl = effectiveLvl + 1;
+        for (const c of candidates) {
+          if (minDrop < 99 && c.dropDist > minDrop) continue;
+          if (c.current !== BlockId.Air && BLOCKS[c.current].dropItem) {
+            this.spawnDroppedItem(
+              { id: BLOCKS[c.current].dropItem!, count: 1 },
+              new THREE.Vector3(c.nx + 0.5, y + 0.4, c.nz + 0.5)
+            );
+          }
+          this.world.setBlock(c.nx, y, c.nz, fluidId, true, nextLvl);
+          this.activeFluidCells.add(`${c.nx},${y},${c.nz}`);
+          settled = false;
+          ops++;
+        }
+      }
+
+      if (settled) {
+        this.activeFluidCells.delete(key);
+      }
+    }
+  }
+
+  private updateFluids(dt: number) {
+    if (this.activeFluidCells.size === 0) return;
+    this.waterFlowTimer += dt;
+    this.lavaFlowTimer += dt;
+
+    if (this.waterFlowTimer >= 0.25) {
+      this.waterFlowTimer = 0;
+      this.stepFluidType(BlockId.Water, 7);
+    }
+    const lavaInterval = this.currentDimension === 'nether' ? 0.35 : 0.65;
+    if (this.lavaFlowTimer >= lavaInterval) {
+      this.lavaFlowTimer = 0;
+      this.stepFluidType(BlockId.Lava, this.currentDimension === 'nether' ? 5 : 3);
+    }
+  }
+
+  // ==================== NETHER PORTALS & DIMENSIONS ====================
+  private tryIgniteNetherPortal(fx: number, fy: number, fz: number): boolean {
+    if (this.world.getBlock(fx, fy, fz) !== BlockId.Air) return false;
+
+    const tryPlane = (axis: 'x' | 'z'): [number, number, number][] | null => {
+      const visited = new Set<string>();
+      const queue: [number, number, number][] = [[fx, fy, fz]];
+      visited.add(`${fx},${fy},${fz}`);
+      const interior: [number, number, number][] = [];
+
+      let minH = axis === 'x' ? fx : fz;
+      let maxH = minH;
+      let minY = fy;
+      let maxY = fy;
+
+      while (queue.length > 0) {
+        const [cx, cy, cz] = queue.shift()!;
+        interior.push([cx, cy, cz]);
+        const ch = axis === 'x' ? cx : cz;
+        if (ch < minH) minH = ch;
+        if (ch > maxH) maxH = ch;
+        if (cy < minY) minY = cy;
+        if (cy > maxY) maxY = cy;
+        if (maxH - minH > 6 || maxY - minY > 6 || interior.length > 36) return null;
+
+        const stepNeighbors: [number, number, number][] =
+          axis === 'x'
+            ? [[cx + 1, cy, cz], [cx - 1, cy, cz], [cx, cy + 1, cz], [cx, cy - 1, cz]]
+            : [[cx, cy, cz + 1], [cx, cy, cz - 1], [cx, cy + 1, cz], [cx, cy - 1, cz]];
+
+        for (const [nx, ny, nz] of stepNeighbors) {
+          if (ny <= 0 || ny >= CHUNK_HEIGHT) return null;
+          const k = `${nx},${ny},${nz}`;
+          if (visited.has(k)) continue;
+          const nb = this.world.getBlock(nx, ny, nz);
+          if (nb === BlockId.Air) {
+            visited.add(k);
+            queue.push([nx, ny, nz]);
+          } else if (nb !== BlockId.Obsidian) {
+            return null;
+          }
+        }
+      }
+
+      const width = maxH - minH + 1;
+      const height = maxY - minY + 1;
+      if (width < 2 || height < 3) return null;
+
+      // Verify full obsidian rectangle perimeter
+      for (let h = minH; h <= maxH; h++) {
+        for (let y = minY; y <= maxY; y++) {
+          const wx = axis === 'x' ? h : fx;
+          const wz = axis === 'z' ? h : fz;
+          if (this.world.getBlock(wx, y, wz) !== BlockId.Air) return null;
+        }
+        const wx = axis === 'x' ? h : fx;
+        const wz = axis === 'z' ? h : fz;
+        if (
+          this.world.getBlock(wx, minY - 1, wz) !== BlockId.Obsidian ||
+          this.world.getBlock(wx, maxY + 1, wz) !== BlockId.Obsidian
+        ) {
+          return null;
+        }
+      }
+      for (let y = minY; y <= maxY; y++) {
+        const leftX = axis === 'x' ? minH - 1 : fx;
+        const leftZ = axis === 'z' ? minH - 1 : fz;
+        const rightX = axis === 'x' ? maxH + 1 : fx;
+        const rightZ = axis === 'z' ? maxH + 1 : fz;
+        if (
+          this.world.getBlock(leftX, y, leftZ) !== BlockId.Obsidian ||
+          this.world.getBlock(rightX, y, rightZ) !== BlockId.Obsidian
+        ) {
+          return null;
+        }
+      }
+      return interior;
+    };
+
+    const cells = tryPlane('x') ?? tryPlane('z');
+    if (!cells) return false;
+    for (const [px, py, pz] of cells) {
+      this.world.setBlock(px, py, pz, BlockId.NetherPortal);
+    }
+    this.unlockAdvancement('nether_portal', 'We Need to Go Deeper', 'Light an Obsidian Nether Portal');
+    return true;
+  }
+
+  private breakAdjacentPortalBlocks(ox: number, oy: number, oz: number) {
+    const queue: [number, number, number][] = [
+      [ox + 1, oy, oz],
+      [ox - 1, oy, oz],
+      [ox, oy + 1, oz],
+      [ox, oy - 1, oz],
+      [ox, oy, oz + 1],
+      [ox, oy, oz - 1],
+    ];
+    const visited = new Set<string>();
+    while (queue.length > 0) {
+      const [x, y, z] = queue.shift()!;
+      const k = `${x},${y},${z}`;
+      if (visited.has(k)) continue;
+      visited.add(k);
+      if (this.world.getBlock(x, y, z) !== BlockId.NetherPortal) continue;
+      this.world.setBlock(x, y, z, BlockId.Air);
+      queue.push([x + 1, y, z], [x - 1, y, z], [x, y + 1, z], [x, y - 1, z], [x, y, z + 1], [x, y, z - 1]);
+    }
+  }
+
+  public switchDimension(target: DimensionType) {
+    if (target === this.currentDimension) return;
+    const scale = target === 'nether' ? 0.25 : 4.0;
+    const tx = Math.floor(this.playerPos.x * scale);
+    const tz = Math.floor(this.playerPos.z * scale);
+
+    this.scene.remove(this.world.group);
+    this.clearEntities();
+    this.activeFluidCells.clear();
+    this.portalCharge = 0;
+    this.portalCooldown = 2.5;
+
+    if (!this.worlds[target]) {
+      this.worlds[target] = new VoxelWorld(
+        this.worldSeed + (target === 'nether' ? 666 : 0),
+        this.atlasTexture,
+        target
+      );
+    }
+    this.currentDimension = target;
+    this.world = this.worlds[target]!;
+    this.scene.add(this.world.group);
+
+    // Ensure immediate arrival 3x3 chunks synchronously; outer chunks stream smoothly
+    const pcx = Math.floor(tx / CHUNK_SIZE);
+    const pcz = Math.floor(tz / CHUNK_SIZE);
+    const initR = Math.min(1, this.options.renderDistance);
+    for (let dx = -initR; dx <= initR; dx++) {
+      for (let dz = -initR; dz <= initR; dz++) {
+        this.world.ensureChunk(pcx + dx, pcz + dz);
+      }
+    }
+    this.world.updateDirtyChunks(999, pcx, pcz);
+
+    // Search for an existing NetherPortal nearby
+    let portalPos: { x: number; y: number; z: number } | null = null;
+    for (let rx = -12; rx <= 12 && !portalPos; rx++) {
+      for (let rz = -12; rz <= 12 && !portalPos; rz++) {
+        for (let ry = 4; ry < CHUNK_HEIGHT - 6; ry++) {
+          if (this.world.getBlock(tx + rx, ry, tz + rz) === BlockId.NetherPortal) {
+            portalPos = { x: tx + rx, y: ry, z: tz + rz };
+            break;
+          }
+        }
+      }
+    }
+
+    if (!portalPos) {
+      let baseY = this.world.getTopSolidY(tx, tz);
+      if (target === 'nether') {
+        baseY = Math.max(16, Math.min(34, baseY));
+      }
+      // Build safe platform + 4x5 Obsidian return portal
+      const floorMat = target === 'nether' ? BlockId.Netherrack : BlockId.Cobblestone;
+      for (let px = -1; px <= 4; px++) {
+        for (let pz = -2; pz <= 2; pz++) {
+          this.world.setBlock(tx + px, baseY - 1, tz + pz, floorMat);
+          for (let py = 0; py <= 4; py++) {
+            this.world.setBlock(tx + px, baseY + py, tz + pz, BlockId.Air);
+          }
+        }
+      }
+      for (let px = 0; px <= 3; px++) {
+        this.world.setBlock(tx + px, baseY - 1, tz, BlockId.Obsidian);
+        this.world.setBlock(tx + px, baseY + 3, tz, BlockId.Obsidian);
+      }
+      for (let py = 0; py <= 2; py++) {
+        this.world.setBlock(tx, baseY + py, tz, BlockId.Obsidian);
+        this.world.setBlock(tx + 3, baseY + py, tz, BlockId.Obsidian);
+        this.world.setBlock(tx + 1, baseY + py, tz, BlockId.NetherPortal);
+        this.world.setBlock(tx + 2, baseY + py, tz, BlockId.NetherPortal);
+      }
+      this.world.updateDirtyChunks(999);
+      portalPos = { x: tx + 1, y: baseY, z: tz };
+    }
+
+    this.playerPos.set(portalPos.x + 0.5, portalPos.y + 0.1, portalPos.z + 1.5);
+    this.playerVel.set(0, 0, 0);
+    this.fallStartY = this.playerPos.y;
+
+    this.applyVisualOptions();
+    if (target === 'nether') {
+      this.unlockAdvancement('into_the_nether', 'We Need to Go Deeper', 'Enter the Nether dimension');
+      this.pushChat('Entered The Nether.', '#fca5a5');
+    } else {
+      this.pushChat('Returned to The Overworld.', '#a7f3d0');
+    }
+    soundEngine.playTeleport();
+    this.syncHud();
+  }
+
+  // ==================== REDSTONE CIRCUIT ENGINE ====================
+  private isRedstoneRelatedBlock(id: BlockId): boolean {
+    return (
+      id === BlockId.RedstoneWire ||
+      id === BlockId.RedstoneWireOn ||
+      id === BlockId.RedstoneTorch ||
+      id === BlockId.LeverOff ||
+      id === BlockId.LeverOn ||
+      id === BlockId.RedstoneLampOff ||
+      id === BlockId.RedstoneLampOn ||
+      id === BlockId.OakDoorClosed ||
+      id === BlockId.OakDoorOpen ||
+      id === BlockId.Tnt
+    );
+  }
+
+  private recalculateRedstone(ox: number, oy: number, oz: number) {
+    const radXZ = 18;
+    const radY = 8;
+    const minY = Math.max(1, oy - radY);
+    const maxY = Math.min(CHUNK_HEIGHT - 2, oy + radY);
+
+    const poweredWires = new Set<string>();
+    const poweredCoords: [number, number, number][] = [];
+    const queue: [number, number, number, number][] = [];
+
+    // 1. Collect all active power sources (Redstone Torch & Active Lever)
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = ox - radXZ; x <= ox + radXZ; x++) {
+        for (let z = oz - radXZ; z <= oz + radXZ; z++) {
+          const b = this.world.getBlock(x, y, z);
+          if (b === BlockId.RedstoneTorch || b === BlockId.LeverOn) {
+            poweredCoords.push([x, y, z]);
+            // Seed adjacent wires at power 15
+            const nbrs: [number, number, number][] = [
+              [x + 1, y, z],
+              [x - 1, y, z],
+              [x, y, z + 1],
+              [x, y, z - 1],
+              [x, y + 1, z],
+              [x, y - 1, z],
+            ];
+            for (const [nx, ny, nz] of nbrs) {
+              const nb = this.world.getBlock(nx, ny, nz);
+              if (nb === BlockId.RedstoneWire || nb === BlockId.RedstoneWireOn) {
+                const k = `${nx},${ny},${nz}`;
+                if (!poweredWires.has(k)) {
+                  poweredWires.add(k);
+                  queue.push([nx, ny, nz, 15]);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 2. BFS signal propagation across Redstone Dust wires (max 15 blocks)
+    const hDirs: [number, number][] = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ];
+    while (queue.length > 0) {
+      const [wx, wy, wz, power] = queue.shift()!;
+      poweredCoords.push([wx, wy, wz]);
+      if (power <= 1) continue;
+
+      for (const [dx, dz] of hDirs) {
+        const nx = wx + dx;
+        const nz = wz + dz;
+        for (const dy of [0, 1, -1]) {
+          const ny = wy + dy;
+          if (ny < minY || ny > maxY) continue;
+          const nb = this.world.getBlock(nx, ny, nz);
+          if (nb === BlockId.RedstoneWire || nb === BlockId.RedstoneWireOn) {
+            const k = `${nx},${ny},${nz}`;
+            if (!poweredWires.has(k)) {
+              poweredWires.add(k);
+              queue.push([nx, ny, nz, power - 1]);
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Collect all directly powered positions (any block adjacent to active source or wire)
+    const poweredTargets = new Set<string>();
+    for (const [px, py, pz] of poweredCoords) {
+      poweredTargets.add(`${px},${py},${pz}`);
+      poweredTargets.add(`${px + 1},${py},${pz}`);
+      poweredTargets.add(`${px - 1},${py},${pz}`);
+      poweredTargets.add(`${px},${py},${pz + 1}`);
+      poweredTargets.add(`${px},${py},${pz - 1}`);
+      poweredTargets.add(`${px},${py + 1},${pz}`);
+      poweredTargets.add(`${px},${py - 1},${pz}`);
+    }
+
+    // 4. Apply power states to Wires, Redstone Lamps, Doors & TNT
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = ox - radXZ; x <= ox + radXZ; x++) {
+        for (let z = oz - radXZ; z <= oz + radXZ; z++) {
+          const b = this.world.getBlock(x, y, z);
+          const k = `${x},${y},${z}`;
+          const isPow = poweredTargets.has(k);
+
+          if (b === BlockId.RedstoneWire && poweredWires.has(k)) {
+            this.world.setBlock(x, y, z, BlockId.RedstoneWireOn);
+          } else if (b === BlockId.RedstoneWireOn && !poweredWires.has(k)) {
+            this.world.setBlock(x, y, z, BlockId.RedstoneWire);
+          } else if (b === BlockId.RedstoneLampOff && isPow) {
+            this.world.setBlock(x, y, z, BlockId.RedstoneLampOn);
+          } else if (b === BlockId.RedstoneLampOn && !isPow) {
+            this.world.setBlock(x, y, z, BlockId.RedstoneLampOff);
+          } else if ((b === BlockId.OakDoorClosed || b === BlockId.OakDoorOpen) && isPow !== this.poweredDoors.has(k)) {
+            if (isPow) {
+              this.poweredDoors.add(k);
+              if (b === BlockId.OakDoorClosed) {
+                this.world.setBlock(x, y, z, BlockId.OakDoorOpen);
+                soundEngine.playDoorToggle();
+              }
+            } else {
+              this.poweredDoors.delete(k);
+              if (b === BlockId.OakDoorOpen) {
+                this.world.setBlock(x, y, z, BlockId.OakDoorClosed);
+                soundEngine.playDoorToggle();
+              }
+            }
+          } else if (b === BlockId.Tnt && isPow) {
+            this.world.setBlock(x, y, z, BlockId.Air);
+            this.igniteTnt(x + 0.5, y, z + 0.5);
+          }
+        }
+      }
+    }
   }
 }

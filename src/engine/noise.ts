@@ -133,6 +133,7 @@ export class SeededNoise {
     const weirdness = this.fbm2D(wx * 0.006 + 500, wz * 0.006 - 500, 3);
 
     if (weirdness > 0.28) return 'mountains';
+    if (weirdness < -0.22 && temp > -0.15) return 'cherry';
     if (temp > 0.2 && moisture < 0.0) return 'desert';
     if (temp < -0.18) return 'taiga';
     if (moisture > 0.05) return 'forest';
@@ -148,6 +149,8 @@ export class SeededNoise {
     let height = 27 + base * 10 + detail * 2.5;
     if (b === 'plains') {
       height = 27 + base * 5 + detail * 1.4;
+    } else if (b === 'cherry') {
+      height = 31 + base * 6 + detail * 1.8;
     } else if (b === 'desert') {
       height = 26 + base * 5.5 + detail * 1.6;
     } else if (b === 'forest') {

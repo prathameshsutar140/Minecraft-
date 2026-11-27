@@ -12,7 +12,7 @@ export interface MobEntity {
   legs: THREE.Object3D[];
   arms: THREE.Object3D[];
   head: THREE.Object3D;
-  bodyMaterials: THREE.MeshStandardMaterial[];
+  bodyMaterials: THREE.MeshLambertMaterial[];
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   yaw: number;
@@ -67,6 +67,11 @@ export interface EnderPearlEntity {
   age: number;
 }
 
+const UNIT_BOX_GEO = new THREE.BoxGeometry(1, 1, 1);
+const DROP_BOX_GEO = new THREE.BoxGeometry(0.28, 0.28, 0.28);
+const ARROW_SHAFT_GEO = new THREE.BoxGeometry(0.05, 0.05, 0.55);
+const ARROW_TIP_GEO = new THREE.BoxGeometry(0.08, 0.08, 0.1);
+const PEARL_GEO = new THREE.SphereGeometry(0.16, 8, 8);
 const mobTexCache = new Map<string, THREE.CanvasTexture>();
 
 function getMobPixelTexture(colorHex: number, variance = 14, camoSpeckles = false): THREE.CanvasTexture {
@@ -110,14 +115,14 @@ function makePart(
   h: number,
   d: number,
   color: number,
-  roughness = 0.88,
-  metalness = 0.02,
+  _roughness = 0.88,
+  _metalness = 0.02,
   camo = false
-): { mesh: THREE.Mesh; mat: THREE.MeshStandardMaterial } {
-  const geo = new THREE.BoxGeometry(w, h, d);
+): { mesh: THREE.Mesh; mat: THREE.MeshLambertMaterial } {
   const map = getMobPixelTexture(color, color < 0x222222 ? 6 : 16, camo);
-  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, map, roughness, metalness });
-  const mesh = new THREE.Mesh(geo, mat);
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, map });
+  const mesh = new THREE.Mesh(UNIT_BOX_GEO, mat);
+  mesh.scale.set(w, h, d);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return { mesh, mat };
@@ -186,7 +191,7 @@ export function createMobEntity(id: number, type: MobType, pos: THREE.Vector3): 
   const group = new THREE.Group();
   const legs: THREE.Object3D[] = [];
   const arms: THREE.Object3D[] = [];
-  const bodyMaterials: THREE.MeshStandardMaterial[] = [];
+  const bodyMaterials: THREE.MeshLambertMaterial[] = [];
   const head = new THREE.Group();
 
   let hostile = false;
@@ -194,7 +199,7 @@ export function createMobEntity(id: number, type: MobType, pos: THREE.Vector3): 
   let width = 0.7;
   let height = 1.2;
 
-  const track = (p: { mesh: THREE.Mesh; mat: THREE.MeshStandardMaterial }) => {
+  const track = (p: { mesh: THREE.Mesh; mat: THREE.MeshLambertMaterial }) => {
     bodyMaterials.push(p.mat);
     return p.mesh;
   };
@@ -548,11 +553,10 @@ export function getMobDrops(type: MobType): { item: ItemId; count: number; xp: n
 
 export function createEnderPearlMesh(): THREE.Mesh {
   return new THREE.Mesh(
-    new THREE.SphereGeometry(0.16, 8, 8),
-    new THREE.MeshStandardMaterial({
+    PEARL_GEO,
+    new THREE.MeshLambertMaterial({
       color: 0x0f766e,
       emissive: 0x134e4a,
-      roughness: 0.3,
     })
   );
 }
@@ -563,22 +567,28 @@ export function createDroppedItemMesh(stack: ItemStack): THREE.Group {
   if (stack.id.startsWith('block:')) {
     const bId = Number(stack.id.slice(6)) as BlockId;
     if (bId === BlockId.GrassBlock || bId === BlockId.OakLeaves) color = 0x559e3c;
+    else if (bId === BlockId.CherryLeaves) color = 0xf7b2cc;
+    else if (bId === BlockId.CherryLog || bId === BlockId.CherryPlanks) color = 0xd996a1;
+    else if (bId === BlockId.Deepslate) color = 0x3a3a40;
+    else if (bId === BlockId.CopperOre || bId === BlockId.CopperBlock) color = 0xd1784e;
+    else if (bId === BlockId.AmethystBlock) color = 0x8d59cf;
     else if (bId === BlockId.Dirt || bId === BlockId.OakLog) color = 0x7d5836;
     else if (bId === BlockId.Stone || bId === BlockId.Cobblestone) color = 0x7d7d7d;
     else if (bId === BlockId.Sand) color = 0xdbd29c;
     else if (bId === BlockId.DiamondOre) color = 0x4eece8;
     else if (bId === BlockId.GoldOre) color = 0xfcee4b;
     else if (bId === BlockId.Tnt) color = 0xd13426;
-  } else if (stack.id === 'diamond') color = 0x4eece8;
+  } else if (stack.id === 'diamond' || stack.id === 'mace') color = 0x4eece8;
   else if (stack.id === 'coal' || stack.id === 'charcoal') color = 0x222222;
-  else if (stack.id === 'iron_ingot') color = 0xd8d8d8;
+  else if (stack.id === 'iron_ingot' || stack.id === 'shield') color = 0xd8d8d8;
+  else if (stack.id === 'copper_ingot' || stack.id === 'raw_copper' || stack.id === 'spyglass') color = 0xd9763b;
   else if (stack.id === 'gold_ingot') color = 0xfcee4b;
   else if (stack.id === 'apple' || stack.id === 'raw_beef') color = 0xd43535;
   else if (stack.id === 'cooked_beef') color = 0x7d4427;
 
   const box = new THREE.Mesh(
-    new THREE.BoxGeometry(0.28, 0.28, 0.28),
-    new THREE.MeshStandardMaterial({ color, roughness: 0.7 })
+    DROP_BOX_GEO,
+    new THREE.MeshLambertMaterial({ color })
   );
   box.castShadow = true;
   box.position.y = 0.22;
@@ -589,12 +599,12 @@ export function createDroppedItemMesh(stack: ItemStack): THREE.Group {
 export function createArrowMesh(): THREE.Group {
   const g = new THREE.Group();
   const shaft = new THREE.Mesh(
-    new THREE.BoxGeometry(0.05, 0.05, 0.55),
-    new THREE.MeshStandardMaterial({ color: 0x7a5934 })
+    ARROW_SHAFT_GEO,
+    new THREE.MeshLambertMaterial({ color: 0x7a5934 })
   );
   const tip = new THREE.Mesh(
-    new THREE.BoxGeometry(0.08, 0.08, 0.1),
-    new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.6, roughness: 0.3 })
+    ARROW_TIP_GEO,
+    new THREE.MeshLambertMaterial({ color: 0xcccccc })
   );
   tip.position.z = 0.28;
   g.add(shaft, tip);

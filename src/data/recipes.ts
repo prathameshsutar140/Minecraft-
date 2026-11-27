@@ -19,6 +19,7 @@ const PLANKS: ItemId[] = [
   BLOCK_ITEM(BlockId.OakPlanks),
   BLOCK_ITEM(BlockId.BirchPlanks),
   BLOCK_ITEM(BlockId.SprucePlanks),
+  BLOCK_ITEM(BlockId.CherryPlanks),
 ];
 
 const WOOLS: ItemId[] = [
@@ -43,6 +44,11 @@ export const CRAFTING_RECIPES: CraftingRecipe[] = [
     id: 'spruce_planks',
     ingredients: [BLOCK_ITEM(BlockId.SpruceLog)],
     result: { id: BLOCK_ITEM(BlockId.SprucePlanks), count: 4 },
+  },
+  {
+    id: 'cherry_planks',
+    ingredients: [BLOCK_ITEM(BlockId.CherryLog)],
+    result: { id: BLOCK_ITEM(BlockId.CherryPlanks), count: 4 },
   },
   // Sticks
   {
@@ -141,6 +147,27 @@ export const CRAFTING_RECIPES: CraftingRecipe[] = [
     pattern: ['RR', 'RR'],
     key: { R: 'redstone' },
     result: { id: BLOCK_ITEM(BlockId.Glowstone), count: 1 },
+  },
+  // Redstone Torch
+  {
+    id: 'redstone_torch',
+    pattern: ['R', 'S'],
+    key: { R: 'redstone', S: 'stick' },
+    result: { id: BLOCK_ITEM(BlockId.RedstoneTorch), count: 1 },
+  },
+  // Lever
+  {
+    id: 'lever',
+    pattern: ['S', 'C'],
+    key: { S: 'stick', C: BLOCK_ITEM(BlockId.Cobblestone) },
+    result: { id: BLOCK_ITEM(BlockId.LeverOff), count: 1 },
+  },
+  // Redstone Lamp
+  {
+    id: 'redstone_lamp',
+    pattern: [' R ', 'RGR', ' R '],
+    key: { R: 'redstone', G: BLOCK_ITEM(BlockId.Glowstone) },
+    result: { id: BLOCK_ITEM(BlockId.RedstoneLampOff), count: 1 },
   },
   // Bucket & Flint and Steel
   {
@@ -372,9 +399,41 @@ export const CRAFTING_RECIPES: CraftingRecipe[] = [
     ingredients: [BLOCK_ITEM(BlockId.WoolWhite), 'lapis_lazuli'],
     result: { id: BLOCK_ITEM(BlockId.WoolBlue), count: 1 },
   },
+  // Copper Block, Shield, Spyglass, Mace
+  {
+    id: 'copper_block',
+    pattern: ['CCC', 'CCC', 'CCC'],
+    key: { C: 'copper_ingot' },
+    result: { id: BLOCK_ITEM(BlockId.CopperBlock), count: 1 },
+  },
+  {
+    id: 'copper_ingot_from_block',
+    ingredients: [BLOCK_ITEM(BlockId.CopperBlock)],
+    result: { id: 'copper_ingot', count: 9 },
+  },
+  {
+    id: 'shield',
+    pattern: ['PIP', 'PPP', ' P '],
+    key: { P: PLANKS, I: 'iron_ingot' },
+    result: { id: 'shield', count: 1 },
+  },
+  {
+    id: 'spyglass',
+    pattern: ['A', 'C', 'C'],
+    key: { A: ['diamond', BLOCK_ITEM(BlockId.AmethystBlock)], C: 'copper_ingot' },
+    result: { id: 'spyglass', count: 1 },
+  },
+  {
+    id: 'mace',
+    pattern: [' I ', ' D ', ' S '],
+    key: { I: BLOCK_ITEM(BlockId.CopperBlock), D: 'diamond', S: 'stick' },
+    result: { id: 'mace', count: 1 },
+  },
 ];
 
 export const SMELTING_RECIPES: SmeltRecipe[] = [
+  { input: 'raw_copper', output: 'copper_ingot', xp: 0.7 },
+  { input: BLOCK_ITEM(BlockId.CopperOre), output: 'copper_ingot', xp: 0.7 },
   { input: 'raw_iron', output: 'iron_ingot', xp: 0.7 },
   { input: BLOCK_ITEM(BlockId.IronOre), output: 'iron_ingot', xp: 0.7 },
   { input: 'raw_gold', output: 'gold_ingot', xp: 1.0 },
@@ -384,6 +443,7 @@ export const SMELTING_RECIPES: SmeltRecipe[] = [
   { input: BLOCK_ITEM(BlockId.OakLog), output: 'charcoal', xp: 0.15 },
   { input: BLOCK_ITEM(BlockId.BirchLog), output: 'charcoal', xp: 0.15 },
   { input: BLOCK_ITEM(BlockId.SpruceLog), output: 'charcoal', xp: 0.15 },
+  { input: BLOCK_ITEM(BlockId.CherryLog), output: 'charcoal', xp: 0.15 },
   { input: BLOCK_ITEM(BlockId.Clay), output: BLOCK_ITEM(BlockId.Bricks), xp: 0.3 },
   { input: 'raw_beef', output: 'cooked_beef', xp: 0.35 },
   { input: 'raw_porkchop', output: 'cooked_porkchop', xp: 0.35 },

@@ -810,6 +810,232 @@ export const BLOCKS: Record<BlockId, BlockDefinition> = {
     dropItem: BLOCK_ITEM(BlockId.EnchantingTable),
     soundGroup: 'stone',
   },
+  [BlockId.NetherPortal]: {
+    id: BlockId.NetherPortal,
+    name: 'Nether Portal',
+    hardness: -1,
+    preferredTool: 'none',
+    minTier: 99,
+    transparent: true,
+    solid: false,
+    liquid: false,
+    lightLevel: 11,
+    dropItem: null,
+    soundGroup: 'glass',
+  },
+  [BlockId.NetherQuartzOre]: {
+    id: BlockId.NetherQuartzOre,
+    name: 'Nether Quartz Ore',
+    hardness: 3.0,
+    preferredTool: 'pickaxe',
+    minTier: 1,
+    transparent: false,
+    solid: true,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: 'quartz',
+    soundGroup: 'stone',
+  },
+  [BlockId.SoulSand]: {
+    id: BlockId.SoulSand,
+    name: 'Soul Sand',
+    hardness: 0.5,
+    preferredTool: 'shovel',
+    minTier: 0,
+    transparent: false,
+    solid: true,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: BLOCK_ITEM(BlockId.SoulSand),
+    soundGroup: 'sand',
+  },
+  [BlockId.RedstoneWire]: {
+    id: BlockId.RedstoneWire,
+    name: 'Redstone Dust',
+    hardness: 0.05,
+    preferredTool: 'none',
+    minTier: 0,
+    transparent: true,
+    solid: false,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: 'redstone',
+    soundGroup: 'stone',
+  },
+  [BlockId.RedstoneWireOn]: {
+    id: BlockId.RedstoneWireOn,
+    name: 'Powered Redstone Dust',
+    hardness: 0.05,
+    preferredTool: 'none',
+    minTier: 0,
+    transparent: true,
+    solid: false,
+    liquid: false,
+    lightLevel: 7,
+    dropItem: 'redstone',
+    soundGroup: 'stone',
+  },
+  [BlockId.RedstoneTorch]: {
+    id: BlockId.RedstoneTorch,
+    name: 'Redstone Torch',
+    hardness: 0.05,
+    preferredTool: 'none',
+    minTier: 0,
+    transparent: true,
+    solid: false,
+    liquid: false,
+    torchLike: true,
+    lightLevel: 7,
+    dropItem: BLOCK_ITEM(BlockId.RedstoneTorch),
+    soundGroup: 'wood',
+  },
+  [BlockId.LeverOff]: {
+    id: BlockId.LeverOff,
+    name: 'Lever',
+    hardness: 0.5,
+    preferredTool: 'none',
+    minTier: 0,
+    transparent: true,
+    solid: false,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: BLOCK_ITEM(BlockId.LeverOff),
+    soundGroup: 'stone',
+  },
+  [BlockId.LeverOn]: {
+    id: BlockId.LeverOn,
+    name: 'Lever (Active)',
+    hardness: 0.5,
+    preferredTool: 'none',
+    minTier: 0,
+    transparent: true,
+    solid: false,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: BLOCK_ITEM(BlockId.LeverOff),
+    soundGroup: 'stone',
+  },
+  [BlockId.RedstoneLampOff]: {
+    id: BlockId.RedstoneLampOff,
+    name: 'Redstone Lamp',
+    hardness: 0.3,
+    preferredTool: 'none',
+    minTier: 0,
+    transparent: false,
+    solid: true,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: BLOCK_ITEM(BlockId.RedstoneLampOff),
+    soundGroup: 'glass',
+  },
+  [BlockId.RedstoneLampOn]: {
+    id: BlockId.RedstoneLampOn,
+    name: 'Redstone Lamp (Lit)',
+    hardness: 0.3,
+    preferredTool: 'none',
+    minTier: 0,
+    transparent: false,
+    solid: true,
+    liquid: false,
+    lightLevel: 15,
+    dropItem: BLOCK_ITEM(BlockId.RedstoneLampOff),
+    soundGroup: 'glass',
+  },
+  [BlockId.Deepslate]: {
+    id: BlockId.Deepslate,
+    name: 'Deepslate',
+    hardness: 3.0,
+    preferredTool: 'pickaxe',
+    minTier: 1,
+    transparent: false,
+    solid: true,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: BLOCK_ITEM(BlockId.Deepslate),
+    soundGroup: 'stone',
+  },
+  [BlockId.CopperOre]: {
+    id: BlockId.CopperOre,
+    name: 'Copper Ore',
+    hardness: 3.0,
+    preferredTool: 'pickaxe',
+    minTier: 2,
+    transparent: false,
+    solid: true,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: 'raw_copper',
+    dropCount: 2,
+    soundGroup: 'stone',
+  },
+  [BlockId.CopperBlock]: {
+    id: BlockId.CopperBlock,
+    name: 'Block of Copper',
+    hardness: 3.0,
+    preferredTool: 'pickaxe',
+    minTier: 2,
+    transparent: false,
+    solid: true,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: BLOCK_ITEM(BlockId.CopperBlock),
+    soundGroup: 'stone',
+  },
+  [BlockId.CherryLog]: {
+    id: BlockId.CherryLog,
+    name: 'Cherry Log',
+    hardness: 2.0,
+    preferredTool: 'axe',
+    minTier: 0,
+    transparent: false,
+    solid: true,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: BLOCK_ITEM(BlockId.CherryLog),
+    soundGroup: 'wood',
+    flammable: true,
+  },
+  [BlockId.CherryLeaves]: {
+    id: BlockId.CherryLeaves,
+    name: 'Cherry Leaves',
+    hardness: 0.2,
+    preferredTool: 'none',
+    minTier: 0,
+    transparent: true,
+    solid: true,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: null,
+    soundGroup: 'leaves',
+    flammable: true,
+  },
+  [BlockId.CherryPlanks]: {
+    id: BlockId.CherryPlanks,
+    name: 'Cherry Planks',
+    hardness: 2.0,
+    preferredTool: 'axe',
+    minTier: 0,
+    transparent: false,
+    solid: true,
+    liquid: false,
+    lightLevel: 0,
+    dropItem: BLOCK_ITEM(BlockId.CherryPlanks),
+    soundGroup: 'wood',
+    flammable: true,
+  },
+  [BlockId.AmethystBlock]: {
+    id: BlockId.AmethystBlock,
+    name: 'Block of Amethyst',
+    hardness: 1.5,
+    preferredTool: 'pickaxe',
+    minTier: 1,
+    transparent: false,
+    solid: true,
+    liquid: false,
+    lightLevel: 3,
+    dropItem: BLOCK_ITEM(BlockId.AmethystBlock),
+    soundGroup: 'glass',
+  },
 };
 
 export const ITEMS: Record<ItemId, ItemDefinition> = (() => {
@@ -825,7 +1051,12 @@ export const ITEMS: Record<ItemId, ItemDefinition> = (() => {
       def.id === BlockId.WheatCrop1 ||
       def.id === BlockId.WheatCrop2 ||
       def.id === BlockId.WheatCrop3 ||
-      def.id === BlockId.OakDoorOpen
+      def.id === BlockId.OakDoorOpen ||
+      def.id === BlockId.NetherPortal ||
+      def.id === BlockId.RedstoneWire ||
+      def.id === BlockId.RedstoneWireOn ||
+      def.id === BlockId.LeverOn ||
+      def.id === BlockId.RedstoneLampOn
     ) {
       continue;
     }
@@ -836,9 +1067,9 @@ export const ITEMS: Record<ItemId, ItemDefinition> = (() => {
       stackSize: def.id === BlockId.Bed ? 1 : 64,
       blockId: def.id,
       fuelTicks:
-        def.id === BlockId.OakLog || def.id === BlockId.BirchLog || def.id === BlockId.SpruceLog
+        def.id === BlockId.OakLog || def.id === BlockId.BirchLog || def.id === BlockId.SpruceLog || def.id === BlockId.CherryLog
           ? 300
-          : def.id === BlockId.OakPlanks || def.id === BlockId.BirchPlanks || def.id === BlockId.SprucePlanks
+          : def.id === BlockId.OakPlanks || def.id === BlockId.BirchPlanks || def.id === BlockId.SprucePlanks || def.id === BlockId.CherryPlanks
             ? 300
             : def.id === BlockId.CraftingTable || def.id === BlockId.Chest || def.id === BlockId.Bookshelf || def.id === BlockId.OakFence
               ? 300
@@ -850,6 +1081,8 @@ export const ITEMS: Record<ItemId, ItemDefinition> = (() => {
     { id: 'stick', name: 'Stick', stackSize: 64, fuelTicks: 100 },
     { id: 'coal', name: 'Coal', stackSize: 64, fuelTicks: 1600 },
     { id: 'charcoal', name: 'Charcoal', stackSize: 64, fuelTicks: 1600 },
+    { id: 'raw_copper', name: 'Raw Copper', stackSize: 64 },
+    { id: 'copper_ingot', name: 'Copper Ingot', stackSize: 64 },
     { id: 'raw_iron', name: 'Raw Iron', stackSize: 64 },
     { id: 'iron_ingot', name: 'Iron Ingot', stackSize: 64 },
     { id: 'raw_gold', name: 'Raw Gold', stackSize: 64 },
@@ -858,6 +1091,7 @@ export const ITEMS: Record<ItemId, ItemDefinition> = (() => {
     { id: 'emerald', name: 'Emerald', stackSize: 64 },
     { id: 'lapis_lazuli', name: 'Lapis Lazuli', stackSize: 64 },
     { id: 'redstone', name: 'Redstone Dust', stackSize: 64 },
+    { id: 'quartz', name: 'Nether Quartz', stackSize: 64 },
     { id: 'flint', name: 'Flint', stackSize: 64 },
     { id: 'leather', name: 'Leather', stackSize: 64 },
     { id: 'feather', name: 'Feather', stackSize: 64 },
@@ -922,6 +1156,11 @@ export const ITEMS: Record<ItemId, ItemDefinition> = (() => {
     { id: 'diamond_chestplate', name: 'Diamond Chestplate', stackSize: 1, armorSlot: 'chestplate', armorDefense: 8, maxDurability: 528 },
     { id: 'diamond_leggings', name: 'Diamond Leggings', stackSize: 1, armorSlot: 'leggings', armorDefense: 6, maxDurability: 495 },
     { id: 'diamond_boots', name: 'Diamond Boots', stackSize: 1, armorSlot: 'boots', armorDefense: 3, maxDurability: 429 },
+
+    // Latest Java Edition Gear (1.9 - 1.21)
+    { id: 'shield', name: 'Shield', stackSize: 1, maxDurability: 336 },
+    { id: 'spyglass', name: 'Spyglass', stackSize: 1 },
+    { id: 'mace', name: 'Mace', stackSize: 1, toolCategory: 'sword', toolTier: 4, miningSpeed: 2, attackDamage: 6, maxDurability: 500 },
   ];
 
   for (const item of extras) {
@@ -947,6 +1186,12 @@ export const CREATIVE_CATALOG: ItemId[] = [
   BLOCK_ITEM(BlockId.SpruceLog),
   BLOCK_ITEM(BlockId.SprucePlanks),
   BLOCK_ITEM(BlockId.SpruceLeaves),
+  BLOCK_ITEM(BlockId.CherryLog),
+  BLOCK_ITEM(BlockId.CherryPlanks),
+  BLOCK_ITEM(BlockId.CherryLeaves),
+  BLOCK_ITEM(BlockId.Deepslate),
+  BLOCK_ITEM(BlockId.CopperBlock),
+  BLOCK_ITEM(BlockId.AmethystBlock),
   BLOCK_ITEM(BlockId.Sand),
   BLOCK_ITEM(BlockId.Gravel),
   BLOCK_ITEM(BlockId.Clay),
@@ -967,6 +1212,13 @@ export const CREATIVE_CATALOG: ItemId[] = [
   BLOCK_ITEM(BlockId.Tnt),
   BLOCK_ITEM(BlockId.Obsidian),
   BLOCK_ITEM(BlockId.Netherrack),
+  BLOCK_ITEM(BlockId.SoulSand),
+  BLOCK_ITEM(BlockId.NetherQuartzOre),
+  BLOCK_ITEM(BlockId.RedstoneTorch),
+  BLOCK_ITEM(BlockId.LeverOff),
+  BLOCK_ITEM(BlockId.RedstoneLampOff),
+  'redstone',
+  'quartz',
   BLOCK_ITEM(BlockId.WoolWhite),
   BLOCK_ITEM(BlockId.WoolRed),
   BLOCK_ITEM(BlockId.WoolBlue),
@@ -975,12 +1227,16 @@ export const CREATIVE_CATALOG: ItemId[] = [
   BLOCK_ITEM(BlockId.Dandelion),
   BLOCK_ITEM(BlockId.Poppy),
   BLOCK_ITEM(BlockId.CoalOre),
+  BLOCK_ITEM(BlockId.CopperOre),
   BLOCK_ITEM(BlockId.IronOre),
   BLOCK_ITEM(BlockId.GoldOre),
   BLOCK_ITEM(BlockId.DiamondOre),
   BLOCK_ITEM(BlockId.RedstoneOre),
   BLOCK_ITEM(BlockId.LapisOre),
   BLOCK_ITEM(BlockId.EmeraldOre),
+  'mace',
+  'shield',
+  'spyglass',
   'diamond_sword',
   'diamond_pickaxe',
   'diamond_axe',
@@ -1013,6 +1269,7 @@ export const CREATIVE_CATALOG: ItemId[] = [
   'iron_leggings',
   'iron_boots',
   'coal',
+  'copper_ingot',
   'iron_ingot',
   'gold_ingot',
   'diamond',
@@ -1038,7 +1295,13 @@ export function getMiningDurationSeconds(blockId: BlockId, heldStack: ItemStack 
     if (heldStack?.enchantment?.id === 'efficiency') {
       speedMultiplier += heldStack.enchantment.level * 2.5;
     }
-  } else if (tool?.toolCategory === 'sword' && (block.id === BlockId.OakLeaves || block.id === BlockId.BirchLeaves || block.id === BlockId.SpruceLeaves)) {
+  } else if (
+    tool?.toolCategory === 'sword' &&
+    (block.id === BlockId.OakLeaves ||
+      block.id === BlockId.BirchLeaves ||
+      block.id === BlockId.SpruceLeaves ||
+      block.id === BlockId.CherryLeaves)
+  ) {
     speedMultiplier = 3;
   }
 

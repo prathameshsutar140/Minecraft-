@@ -37,7 +37,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Authentic Minecraft Java Edition beveled GUI panels */
+/* Authentic Minecraft Bedrock Edition beveled GUI panels */
 .mc-panel {
   background-color: #c6c6c6;
   border-top: 3px solid #ffffff;
@@ -93,6 +93,26 @@
   border-bottom-color: #252525;
 }
 
+/* Signature Minecraft Bedrock Edition Ore UI Green Primary Action Button */
+.mc-button-green {
+  background-color: #3c8527;
+  color: #ffffff;
+  text-shadow: 2px 2px 0 #1f4d12;
+  border-top: 2px solid #63c744;
+  border-left: 2px solid #63c744;
+  border-right: 2px solid #225414;
+  border-bottom: 2px solid #225414;
+}
+
+.mc-button-green:hover:not(:disabled) {
+  background-color: #499c31;
+  border-top-color: #7ee35d;
+  border-left-color: #7ee35d;
+  border-right-color: #286318;
+  border-bottom-color: #286318;
+  color: #ffffa0;
+}
+
 .mc-text-shadow {
   text-shadow: 2px 2px 0 #1f1f1f;
 }
@@ -106,7 +126,7 @@
      0px  2px 0 #000000;
 }
 
-/* Authentic Java Edition Hotbar & Touch UI frames */
+/* Authentic Bedrock Edition Hotbar & Touch UI frames */
 .mc-hotbar {
   background-color: rgba(18, 18, 18, 0.78);
   border-top: 2px solid #5a5a5a;

@@ -51,12 +51,12 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
   return (
     <div className="fixed inset-0 z-20 flex flex-col items-center justify-between py-6 sm:py-10 px-4 sm:px-6 overflow-y-auto bg-gradient-to-b from-black/45 via-black/15 to-black/65 pointer-events-auto">
-      {/* Bespoke Inline SVG Minecraft Java Edition Lockup */}
+      {/* Bespoke Inline SVG Minecraft Bedrock Edition Lockup */}
       <div className="relative flex flex-col items-center mt-4 select-none">
         <svg
           viewBox="0 0 680 144"
           className="w-[min(640px,92vw)] h-auto drop-shadow-[0_8px_0_rgba(0,0,0,0.85)]"
-          aria-label="Minecraft Java Edition"
+          aria-label="Minecraft Bedrock Edition"
         >
           <defs>
             <linearGradient id="mcStoneFace" x1="0" y1="0" x2="0" y2="1">
@@ -134,29 +134,29 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             <path d="M562 38 l-5 8 l4 8" />
           </g>
 
-          {/* JAVA EDITION Stone Banner */}
-          <g transform="translate(206, 94)">
-            <rect x="0" y="0" width="268" height="28" fill="#181818" />
-            <rect x="2" y="2" width="264" height="24" fill="#3a3a3a" />
-            <rect x="2" y="2" width="264" height="2" fill="#707070" />
-            <rect x="2" y="24" width="264" height="2" fill="#1e1e1e" />
+          {/* BEDROCK EDITION Stone Banner */}
+          <g transform="translate(182, 94)">
+            <rect x="0" y="0" width="316" height="30" fill="#181818" />
+            <rect x="2" y="2" width="312" height="24" fill="#32353b" />
+            <rect x="2" y="2" width="312" height="2" fill="#6b7280" />
+            <rect x="2" y="25" width="312" height="3" fill="#3c8527" />
             <text
-              x="134"
+              x="158"
               y="19"
               textAnchor="middle"
               fill="#f8fafc"
               fontFamily="Silkscreen, monospace"
               fontWeight="700"
-              fontSize="15"
-              letterSpacing="5"
+              fontSize="14.5"
+              letterSpacing="4.5"
             >
-              JAVA EDITION
+              BEDROCK EDITION
             </text>
           </g>
         </svg>
 
         <div className="mc-splash text-[11px] sm:text-sm font-mc text-[#ffff55] mc-outline-shadow -mt-3 sm:-mt-4 self-end mr-2 sm:mr-8 pointer-events-none">
-          100% Java Edition!
+          100% Bedrock Edition!
         </div>
       </div>
 
@@ -166,16 +166,16 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
           {savedWorld ? (
             <button
               onClick={onContinueSaved}
-              className="mc-button h-12 px-5 text-sm font-mc tracking-wide cursor-pointer"
+              className="mc-button mc-button-green h-12 px-5 text-sm font-mc tracking-wide cursor-pointer"
             >
-              Continue Saved World (Day {savedWorld.dayCount} · {savedWorld.gameMode})
+              Play · Continue World (Day {savedWorld.dayCount} · {savedWorld.gameMode})
             </button>
           ) : (
             <button
               onClick={launchNew}
-              className="mc-button h-12 px-5 text-sm font-mc tracking-wide cursor-pointer"
+              className="mc-button mc-button-green h-12 px-5 text-sm font-mc tracking-wide cursor-pointer"
             >
-              Play Survival World
+              Play
             </button>
           )}
 
@@ -228,22 +228,30 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
           <div className="flex flex-col gap-1.5">
             <span className="text-xs font-bold">Game Mode</span>
-            <div className="grid grid-cols-2 gap-2">
-              {(['survival', 'creative'] as GameMode[]).map((m) => (
+            <div className="grid grid-cols-3 gap-2">
+              {(['survival', 'hardcore', 'creative'] as GameMode[]).map((m) => (
                 <button
                   key={m}
                   onClick={() => setMode(m)}
-                  className={`mc-button h-10 text-xs capitalize cursor-pointer ${
-                    mode === m ? 'ring-2 ring-[#ffffa0]' : 'opacity-80'
+                  className={`mc-button h-11 px-1.5 text-[11px] leading-tight cursor-pointer ${
+                    mode === m
+                      ? m === 'hardcore'
+                        ? 'ring-2 ring-[#f87171]'
+                        : 'ring-2 ring-[#ffffa0]'
+                      : 'opacity-80'
                   }`}
                 >
-                  {m === 'survival' ? 'Survival (Crafting & Mobs)' : 'Creative (Flight & All Blocks)'}
+                  {m === 'survival'
+                    ? 'Survival'
+                    : m === 'hardcore'
+                      ? 'Hardcore (1 Life)'
+                      : 'Creative'}
                 </button>
               ))}
             </div>
           </div>
 
-          {mode === 'survival' && (
+          {mode !== 'creative' && (
             <label className="flex items-center justify-between bg-[#b2b2b2] px-3 py-2 border border-[#707070] cursor-pointer">
               <span className="text-xs font-bold">Starter Bonus Kit</span>
               <input
@@ -257,9 +265,9 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
           <button
             onClick={launchNew}
-            className="mc-button h-11 text-sm font-bold cursor-pointer mt-1"
+            className="mc-button mc-button-green h-11 text-sm font-bold cursor-pointer mt-1"
           >
-            Create New World
+            Create & Play
           </button>
         </div>
       )}
@@ -299,7 +307,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             <input
               type="range"
               min={3}
-              max={6}
+              max={8}
               value={options.renderDistance}
               onChange={(e) => onUpdateOptions({ renderDistance: Number(e.target.value) })}
               className="accent-[#4c6b22]"
@@ -336,41 +344,74 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
             />
           </label>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-2 gap-2">
             <button
-              onClick={() => onUpdateOptions({ muted: !options.muted })}
-              className="mc-button flex-1 min-w-[110px] h-9 text-xs cursor-pointer"
+              onClick={() => {
+                const next =
+                  options.graphicsQuality === 'vibrant'
+                    ? 'fancy'
+                    : options.graphicsQuality === 'fancy'
+                      ? 'fast'
+                      : 'vibrant';
+                onUpdateOptions({ graphicsQuality: next });
+              }}
+              className="mc-button h-9 text-xs cursor-pointer"
             >
-              Audio: {options.muted ? 'OFF' : 'ON'}
+              Graphics: {options.graphicsQuality === 'vibrant' ? 'Vibrant' : options.graphicsQuality === 'fancy' ? 'Fancy' : 'Fast'}
             </button>
             <button
-              onClick={() => onUpdateOptions({ showClouds: !options.showClouds })}
-              className="mc-button flex-1 min-w-[110px] h-9 text-xs cursor-pointer"
+              onClick={() => {
+                const next =
+                  options.cloudStyle === 'fancy'
+                    ? 'fast'
+                    : options.cloudStyle === 'fast'
+                      ? 'off'
+                      : 'fancy';
+                onUpdateOptions({ cloudStyle: next, showClouds: next !== 'off' });
+              }}
+              className="mc-button h-9 text-xs cursor-pointer"
             >
-              Clouds: {options.showClouds ? 'ON' : 'OFF'}
+              Clouds: {options.cloudStyle.toUpperCase()}
             </button>
             <button
               onClick={() =>
                 onUpdateOptions({
-                  touchControls:
-                    options.touchControls === 'auto'
-                      ? 'on'
-                      : options.touchControls === 'on'
-                        ? 'off'
-                        : 'auto',
+                  leafQuality: options.leafQuality === 'fancy' ? 'fast' : 'fancy',
                 })
               }
-              className="mc-button flex-1 min-w-[140px] h-9 text-xs cursor-pointer"
+              className="mc-button h-9 text-xs cursor-pointer"
             >
-              Touch Controls: {options.touchControls.toUpperCase()}
+              Leaves: {options.leafQuality === 'fancy' ? 'Fancy' : 'Fast'}
+            </button>
+            <button
+              onClick={() => onUpdateOptions({ muted: !options.muted })}
+              className="mc-button h-9 text-xs cursor-pointer"
+            >
+              Audio: {options.muted ? 'OFF' : 'ON'}
             </button>
           </div>
+
+          <button
+            onClick={() =>
+              onUpdateOptions({
+                touchControls:
+                  options.touchControls === 'auto'
+                    ? 'on'
+                    : options.touchControls === 'on'
+                      ? 'off'
+                      : 'auto',
+              })
+            }
+            className="mc-button h-9 text-xs cursor-pointer"
+          >
+            Touch Controls: {options.touchControls.toUpperCase()}
+          </button>
         </div>
       )}
 
       {/* Single flat control-hint line */}
       <p className="text-[10px] sm:text-xs text-white/85 mc-text-shadow text-center tracking-wide">
-        Desktop: WASD Move · Space Jump/Fly · Left Mine · Right Place/Use · E Inv · F3 Debug · T Chat · Mobile: On-screen Touch Pad
+        Desktop: WASD Move · Space Jump/Fly · Left Hit/Mine · Right Place/Use · Shift Sneak/Shield · E Inv · T Chat · Mobile: Touch D-Pad
       </p>
     </div>
   );

@@ -31,7 +31,10 @@ interface HudOverlayProps {
   onToggleSneak: () => void;
 }
 
-const HeartIcon: React.FC<{ state: 'full' | 'half' | 'empty' }> = ({ state }) => (
+const HeartIcon: React.FC<{ state: 'full' | 'half' | 'empty'; hardcore?: boolean }> = ({
+  state,
+  hardcore,
+}) => (
   <svg viewBox="0 0 9 9" className="w-[15px] h-[15px] sm:w-[18px] sm:h-[18px]">
     <path d="M2 1h2v1h1V1h2v1h1v3H7v1H6v1H5v1H4V7H3V6H2V5H1V2h1V1z" fill="#111111" />
     {state !== 'empty' && (
@@ -45,6 +48,18 @@ const HeartIcon: React.FC<{ state: 'full' | 'half' | 'empty' }> = ({ state }) =>
       />
     )}
     {state !== 'empty' && <rect x="2" y="2" width="1" height="1" fill="#fca5a5" />}
+    {hardcore && state !== 'empty' && (
+      <>
+        <rect x="2" y="3" width="1" height="1" fill="#111111" />
+        <rect x="3" y="4" width="1" height="1" fill="#450a0a" />
+        {state === 'full' && (
+          <>
+            <rect x="6" y="3" width="1" height="1" fill="#111111" />
+            <rect x="5" y="4" width="1" height="1" fill="#450a0a" />
+          </>
+        )}
+      </>
+    )}
   </svg>
 );
 
@@ -191,12 +206,18 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
 
   return (
     <div className="fixed inset-0 z-10 pointer-events-none select-none">
-      {/* Underwater / Lava / Damage screen tint */}
+      {/* Underwater / Lava / Portal / Damage screen tint */}
       {hud.isUnderwater && (
         <div className="absolute inset-0 bg-[#1e40af]/35 pointer-events-none" />
       )}
       {hud.isInLava && (
         <div className="absolute inset-0 bg-[#ea580c]/45 pointer-events-none" />
+      )}
+      {hud.portalCharge > 0 && (
+        <div
+          className="absolute inset-0 bg-[#7e22ce] pointer-events-none"
+          style={{ opacity: Math.min(0.65, hud.portalCharge * 0.65) }}
+        />
       )}
       {hud.damageFlash > 0 && (
         <div
@@ -205,9 +226,56 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
         />
       )}
 
-      {/* Center Crosshair (Java Edition mix-blend-difference) */}
+      {/* Spyglass Optical Scope Overlay (Java 1.17+ square/circular aperture, zero backdrop-filter) */}
+      {hud.isSpyglassZoom && hud.activeContainer === 'none' && !chatOpen && (
+        <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+          <svg
+            viewBox="0 0 100 100"
+            preserveAspectRatio="xMidYMid slice"
+            className="w-full h-full"
+          >
+            <defs>
+              <mask id="spyglass-aperture">
+                <rect x="0" y="0" width="100" height="100" fill="#ffffff" />
+                <rect x="26" y="26" width="48" height="48" rx="4" fill="#000000" />
+              </mask>
+            </defs>
+            <rect
+              x="0"
+              y="0"
+              width="100"
+              height="100"
+              fill="#050508"
+              mask="url(#spyglass-aperture)"
+            />
+            <rect
+              x="25.5"
+              y="25.5"
+              width="49"
+              height="49"
+              rx="4"
+              fill="none"
+              stroke="#1f2937"
+              strokeWidth="1.4"
+            />
+            <rect
+              x="26.3"
+              y="26.3"
+              width="47.4"
+              height="47.4"
+              rx="3.4"
+              fill="none"
+              stroke="#93c5fd"
+              strokeOpacity="0.28"
+              strokeWidth="0.5"
+            />
+          </svg>
+        </div>
+      )}
+
+      {/* Center Crosshair (Bedrock Edition crisp crosshair) */}
       {hud.activeContainer === 'none' && !chatOpen && (
-        <div className="absolute inset-0 flex items-center justify-center mix-blend-difference">
+        <div className="absolute inset-0 flex items-center justify-center mix-blend-difference pointer-events-none">
           <svg viewBox="0 0 16 16" className="w-[18px] h-[18px]">
             <rect x="7" y="1" width="2" height="14" fill="#ffffff" />
             <rect x="1" y="7" width="14" height="2" fill="#ffffff" />
@@ -215,18 +283,25 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
         </div>
       )}
 
-      {/* Top-Left Lock Pointer Hint (desktop) */}
-      {!showTouchControls && !pointerLocked && hud.activeContainer === 'none' && !chatOpen && (
-        <div className="absolute top-3 left-3 pointer-events-auto">
-          <button
-            onClick={(e) => {
-              e.currentTarget.blur();
-              onRequestLock();
-            }}
-            className="mc-button px-3 py-1 text-[11px] cursor-pointer"
-          >
-            Lock Mouse (or Drag / Arrows)
-          </button>
+      {/* Top-Left Lock Pointer Hint & Bedrock Coordinates Bar */}
+      {hud.activeContainer === 'none' && !chatOpen && (
+        <div className="absolute top-3 left-3 flex flex-col items-start gap-1.5">
+          {!showTouchControls && !pointerLocked && (
+            <button
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onRequestLock();
+              }}
+              className="mc-button px-3 py-1 text-[11px] cursor-pointer pointer-events-auto"
+            >
+              Lock Mouse (or Drag / Arrows)
+            </button>
+          )}
+          {!showDebug && (
+            <div className="bg-black/55 px-2.5 py-1 text-[11px] font-mc-mono text-white mc-text-shadow pointer-events-none">
+              Position: {Math.floor(hud.debug.x)}, {Math.floor(hud.debug.y)}, {Math.floor(hud.debug.z)}
+            </div>
+          )}
         </div>
       )}
 
@@ -316,11 +391,11 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
         </div>
       )}
 
-      {/* Classic Java Edition F3 Debug Screen */}
+      {/* Bedrock Edition Info / Debug Overlay */}
       {showDebug && (
-        <div className="absolute top-12 left-2 right-2 flex justify-between text-[11px] sm:text-[12px] leading-[1.35] font-mc-mono text-white pointer-events-none">
+        <div className="absolute top-14 left-2 right-2 flex justify-between text-[11px] sm:text-[12px] leading-[1.35] font-mc-mono text-white pointer-events-none">
           <div className="flex flex-col items-start gap-0.5">
-            <span className="bg-black/50 px-1.5">Minecraft Java Edition (WebGL Voxel Engine)</span>
+            <span className="bg-black/50 px-1.5">Minecraft: Bedrock Edition (1.21+ WebGL)</span>
             <span className="bg-black/50 px-1.5">
               {hud.debug.fps} fps · Chunks: {hud.debug.loadedChunks} · Entities: {hud.debug.mobCount}
             </span>
@@ -337,6 +412,9 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
 
           <div className="hidden sm:flex flex-col items-end gap-0.5 mt-6">
             <span className="bg-black/50 px-1.5">Seed: {hud.debug.seed}</span>
+            <span className="bg-black/50 px-1.5">
+              Dimension: {hud.dimension === 'nether' ? 'The Nether' : 'Overworld'}
+            </span>
             <span className="bg-black/50 px-1.5">GameMode: {hud.gameMode}</span>
           </div>
         </div>
@@ -419,7 +497,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             }}
           />
 
-          {/* Bottom-Left Touch D-Pad (Java UI Stone-Beveled Style) */}
+          {/* Bottom-Left Touch D-Pad (Bedrock Stone-Beveled Style) */}
           <div className="absolute left-3 bottom-24 sm:bottom-20 grid grid-cols-3 gap-1.5 pointer-events-auto touch-none z-20">
             <div />
             <button
@@ -492,7 +570,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             <div />
           </div>
 
-          {/* Bottom-Right Touch Action Buttons (Java UI Stone-Beveled Style) */}
+          {/* Bottom-Right Touch Action Buttons (Bedrock Stone-Beveled Style) */}
           <div className="absolute right-3 bottom-24 sm:bottom-20 flex flex-col items-end gap-1.5 pointer-events-auto touch-none z-20">
             <div className="flex gap-1.5">
               <button
@@ -531,7 +609,9 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   e.preventDefault();
                   onTouchPlaceOrUse();
                 }}
-                className="mc-touch-btn active:bg-[#2563eb]/80 w-14 h-12 text-[10px] font-bold flex items-center justify-center touch-none"
+                className={`active:bg-[#2563eb]/80 w-14 h-12 text-[10px] font-bold flex items-center justify-center touch-none ${
+                  hud.isBlocking || hud.isSpyglassZoom ? 'mc-touch-btn-active' : 'mc-touch-btn'
+                }`}
               >
                 USE
               </button>
@@ -584,8 +664,23 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
         </>
       )}
 
-      {/* Bottom Center Java Edition Survival Vitals + Hotbar */}
+      {/* Bottom Center Bedrock Edition Survival Vitals + Hotbar */}
       <div className="absolute bottom-2 sm:bottom-3 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 max-w-[98vw]">
+        {(hud.isBlocking || hud.isSwimming) && hud.activeContainer === 'none' && (
+          <div className="flex items-center gap-1.5 mb-0.5">
+            {hud.isBlocking && (
+              <span className="bg-black/70 px-2 py-0.5 text-[10px] font-bold text-[#93c5fd] mc-text-shadow">
+                Blocking
+              </span>
+            )}
+            {hud.isSwimming && (
+              <span className="bg-black/70 px-2 py-0.5 text-[10px] font-bold text-[#67e8f9] mc-text-shadow">
+                Swimming
+              </span>
+            )}
+          </div>
+        )}
+
         {heldToast && (
           <div className="bg-black/65 px-2.5 py-0.5 text-[11px] sm:text-xs text-white mc-text-shadow mb-0.5">
             {heldToast}
@@ -594,7 +689,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
 
         <div className="flex items-end gap-1.5">
           <div className="flex flex-col items-center gap-1">
-            {hud.gameMode === 'survival' && (
+            {(hud.gameMode === 'survival' || hud.gameMode === 'hardcore') && (
               <div className="w-full flex flex-col gap-1 px-0.5">
                 {/* Top row: Armor (left) & Air Bubbles (right) */}
                 {(hud.armor > 0 || hud.isUnderwater) && (
@@ -636,6 +731,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                       return (
                         <HeartIcon
                           key={i}
+                          hardcore={hud.gameMode === 'hardcore'}
                           state={val >= 2 ? 'full' : val === 1 ? 'half' : 'empty'}
                         />
                       );
@@ -654,7 +750,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
                   </div>
                 </div>
 
-                {/* Classic 18-Segment Java XP Progress Bar */}
+                {/* Classic 18-Segment XP Progress Bar */}
                 <div className="relative h-[7px] bg-[#161b12] border border-black shadow-[inset_0_1px_0_#0a0d08]">
                   <div
                     className="h-full bg-[#80ff20] border-b border-[#3a7a0c]"
@@ -677,7 +773,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
               </div>
             )}
 
-            {/* 9-Slot Java Hotbar */}
+            {/* 9-Slot Bedrock Hotbar */}
             <div className="pointer-events-auto flex items-center gap-[2px] mc-hotbar p-[3px]">
               {hud.hotbar.map((stack, i) => (
                 <ItemSlot

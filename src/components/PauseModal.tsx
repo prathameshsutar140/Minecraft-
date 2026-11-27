@@ -27,18 +27,22 @@ export const PauseModal: React.FC<PauseModalProps> = ({
           <h2 className="text-center text-lg font-bold text-white mc-text-shadow mb-2">
             Game Menu
           </h2>
-          <button onClick={onResume} className="mc-button h-11 text-sm cursor-pointer">
-            Back to Game
+          <button onClick={onResume} className="mc-button mc-button-green h-11 text-sm cursor-pointer">
+            Resume Game
           </button>
 
           <div className="grid grid-cols-2 gap-2">
             <button
-              onClick={() =>
-                onCommand(`/gamemode ${gameMode === 'survival' ? 'creative' : 'survival'}`)
-              }
-              className="mc-button h-10 text-xs cursor-pointer"
+              onClick={() => {
+                if (gameMode === 'hardcore') return;
+                onCommand(`/gamemode ${gameMode === 'survival' ? 'creative' : 'survival'}`);
+              }}
+              disabled={gameMode === 'hardcore'}
+              className={`mc-button h-10 text-xs ${
+                gameMode === 'hardcore' ? 'opacity-65 cursor-not-allowed' : 'cursor-pointer'
+              }`}
             >
-              Mode: {gameMode === 'survival' ? 'Survival' : 'Creative'}
+              Mode: {gameMode === 'hardcore' ? 'Hardcore' : gameMode === 'survival' ? 'Survival' : gameMode === 'spectator' ? 'Spectator' : 'Creative'}
             </button>
             <button
               onClick={() => onCommand('/time set day')}
@@ -112,7 +116,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             <input
               type="range"
               min={3}
-              max={6}
+              max={8}
               value={options.renderDistance}
               onChange={(e) => onUpdateOptions({ renderDistance: Number(e.target.value) })}
               className="accent-[#4c6b22]"
@@ -148,29 +152,68 @@ export const PauseModal: React.FC<PauseModalProps> = ({
               className="accent-[#4c6b22]"
             />
           </label>
-          <div className="flex flex-wrap gap-2 pt-1">
+
+          <div className="grid grid-cols-2 gap-2 pt-1">
             <button
-              onClick={() => onUpdateOptions({ muted: !options.muted })}
-              className="mc-button flex-1 min-w-[100px] h-9 text-xs cursor-pointer"
+              onClick={() => {
+                const next =
+                  options.graphicsQuality === 'vibrant'
+                    ? 'fancy'
+                    : options.graphicsQuality === 'fancy'
+                      ? 'fast'
+                      : 'vibrant';
+                onUpdateOptions({ graphicsQuality: next });
+              }}
+              className="mc-button h-9 text-xs cursor-pointer"
             >
-              Audio: {options.muted ? 'OFF' : 'ON'}
+              Graphics: {options.graphicsQuality === 'vibrant' ? 'Vibrant' : options.graphicsQuality === 'fancy' ? 'Fancy' : 'Fast'}
+            </button>
+            <button
+              onClick={() => {
+                const next =
+                  options.cloudStyle === 'fancy'
+                    ? 'fast'
+                    : options.cloudStyle === 'fast'
+                      ? 'off'
+                      : 'fancy';
+                onUpdateOptions({ cloudStyle: next, showClouds: next !== 'off' });
+              }}
+              className="mc-button h-9 text-xs cursor-pointer"
+            >
+              Clouds: {options.cloudStyle.toUpperCase()}
             </button>
             <button
               onClick={() =>
                 onUpdateOptions({
-                  touchControls:
-                    options.touchControls === 'auto'
-                      ? 'on'
-                      : options.touchControls === 'on'
-                        ? 'off'
-                        : 'auto',
+                  leafQuality: options.leafQuality === 'fancy' ? 'fast' : 'fancy',
                 })
               }
-              className="mc-button flex-1 min-w-[130px] h-9 text-xs cursor-pointer"
+              className="mc-button h-9 text-xs cursor-pointer"
             >
-              Touch: {options.touchControls.toUpperCase()}
+              Leaves: {options.leafQuality === 'fancy' ? 'Fancy' : 'Fast'}
+            </button>
+            <button
+              onClick={() => onUpdateOptions({ muted: !options.muted })}
+              className="mc-button h-9 text-xs cursor-pointer"
+            >
+              Audio: {options.muted ? 'OFF' : 'ON'}
             </button>
           </div>
+          <button
+            onClick={() =>
+              onUpdateOptions({
+                touchControls:
+                  options.touchControls === 'auto'
+                    ? 'on'
+                    : options.touchControls === 'on'
+                      ? 'off'
+                      : 'auto',
+              })
+            }
+            className="mc-button h-9 text-xs cursor-pointer"
+          >
+            Touch: {options.touchControls.toUpperCase()}
+          </button>
         </div>
       )}
     </div>

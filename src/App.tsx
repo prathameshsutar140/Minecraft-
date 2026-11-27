@@ -38,6 +38,9 @@ export default function App() {
     soundVolume: 0.65,
     muted: false,
     showClouds: true,
+    graphicsQuality: 'vibrant',
+    cloudStyle: 'fancy',
+    leafQuality: 'fancy',
     touchControls: 'auto',
   });
 
@@ -67,6 +70,7 @@ export default function App() {
     });
 
     engineRef.current = engine;
+    engine.updateOptions(options);
     return () => {
       window.clearTimeout(toastTimer);
       engine.dispose();
@@ -266,8 +270,11 @@ export default function App() {
       {phase === 'dead' && (
         <DeathModal
           score={hud?.score ?? 0}
+          hardcore={hud?.gameMode === 'hardcore'}
           onRespawn={() => engineRef.current?.respawnPlayer()}
           onTitleScreen={() => engineRef.current?.saveAndQuitToTitle()}
+          onSpectate={() => engineRef.current?.spectateHardcoreWorld()}
+          onDeleteAndTitle={() => engineRef.current?.clearSavedWorld()}
         />
       )}
     </main>

@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { BlockId, ItemId } from '../types/game';
 
-// 8x10 tile grid of 16x16 pixel art tiles -> 128x160 atlas
+// 8x12 tile grid of 16x16 pixel art tiles -> 128x192 atlas
 export const ATLAS_COLS = 8;
-export const ATLAS_ROWS = 10;
+export const ATLAS_ROWS = 12;
 export const TILE_PX = 16;
 
 export const enum Tile {
@@ -78,6 +78,23 @@ export const enum Tile {
   OakDoor = 68,
   EnchantTop = 69,
   EnchantSide = 70,
+  NetherPortal = 71,
+  NetherQuartzOre = 72,
+  SoulSand = 73,
+  RedstoneWireOff = 74,
+  RedstoneWireOn = 75,
+  RedstoneTorch = 76,
+  Lever = 77,
+  RedstoneLampOff = 78,
+  RedstoneLampOn = 79,
+  Deepslate = 80,
+  CopperOre = 81,
+  CopperBlock = 82,
+  CherryLogSide = 83,
+  CherryLogTop = 84,
+  CherryLeaves = 85,
+  CherryPlanks = 86,
+  AmethystBlock = 87,
 }
 
 export type FaceDir = 'px' | 'nx' | 'py' | 'ny' | 'pz' | 'nz';
@@ -211,6 +228,39 @@ export function getBlockFaceTile(blockId: BlockId, face: FaceDir): Tile {
       return Tile.OakPlanks;
     case BlockId.EnchantingTable:
       return face === 'py' ? Tile.EnchantTop : face === 'ny' ? Tile.Obsidian : Tile.EnchantSide;
+    case BlockId.NetherPortal:
+      return Tile.NetherPortal;
+    case BlockId.NetherQuartzOre:
+      return Tile.NetherQuartzOre;
+    case BlockId.SoulSand:
+      return Tile.SoulSand;
+    case BlockId.RedstoneWire:
+      return Tile.RedstoneWireOff;
+    case BlockId.RedstoneWireOn:
+      return Tile.RedstoneWireOn;
+    case BlockId.RedstoneTorch:
+      return Tile.RedstoneTorch;
+    case BlockId.LeverOff:
+    case BlockId.LeverOn:
+      return Tile.Lever;
+    case BlockId.RedstoneLampOff:
+      return Tile.RedstoneLampOff;
+    case BlockId.RedstoneLampOn:
+      return Tile.RedstoneLampOn;
+    case BlockId.Deepslate:
+      return Tile.Deepslate;
+    case BlockId.CopperOre:
+      return Tile.CopperOre;
+    case BlockId.CopperBlock:
+      return Tile.CopperBlock;
+    case BlockId.CherryLog:
+      return face === 'py' || face === 'ny' ? Tile.CherryLogTop : Tile.CherryLogSide;
+    case BlockId.CherryLeaves:
+      return Tile.CherryLeaves;
+    case BlockId.CherryPlanks:
+      return Tile.CherryPlanks;
+    case BlockId.AmethystBlock:
+      return Tile.AmethystBlock;
     default:
       return Tile.Stone;
   }
@@ -702,6 +752,119 @@ export function buildTextureAtlas(maxAnisotropy: number): {
   fillNoiseTile(ctx, Tile.EnchantSide, ['#181024', '#26183b', '#120b1c'], 92);
   for (let x = 0; x < 16; x++) for (let y = 0; y <= 3; y++) drawTilePixel(ctx, Tile.EnchantSide, x, y, y === 3 ? '#4eece8' : '#a81f2e');
 
+  // Nether Portal swirling purple
+  fillNoiseTile(ctx, Tile.NetherPortal, ['#7e22ce', '#9333ea', '#a855f7', '#6b21a8'], 93, 0.88);
+  for (let i = 0; i < 16; i++) {
+    const wy = (i * 3 + 2) % 16;
+    drawTilePixel(ctx, Tile.NetherPortal, i, wy, '#e879f9');
+    drawTilePixel(ctx, Tile.NetherPortal, (i + 5) % 16, (wy + 7) % 16, '#c084fc');
+  }
+
+  // Nether Quartz Ore
+  fillNoiseTile(ctx, Tile.NetherQuartzOre, ['#7d3632', '#6e2d29', '#873d38', '#5c2320'], 94);
+  const quartzSpots = [
+    [3,3],[4,3],[4,4],[10,2],[11,3],[6,8],[7,8],[7,9],[12,11],[13,11],[3,12],[4,13]
+  ];
+  quartzSpots.forEach(([x, y]) => {
+    drawTilePixel(ctx, Tile.NetherQuartzOre, x, y, '#f4f0ea');
+    drawTilePixel(ctx, Tile.NetherQuartzOre, Math.min(15, x + 1), y, '#dcd5cb');
+  });
+
+  // Soul Sand
+  fillNoiseTile(ctx, Tile.SoulSand, ['#544033', '#47362b', '#614b3c', '#3d2d23'], 95);
+  for (const [fx, fy] of [[3, 3], [10, 4], [5, 10], [11, 11]]) {
+    drawTilePixel(ctx, Tile.SoulSand, fx, fy, '#2b1f17');
+    drawTilePixel(ctx, Tile.SoulSand, fx + 2, fy, '#2b1f17');
+    drawTilePixel(ctx, Tile.SoulSand, fx + 1, fy + 2, '#2b1f17');
+  }
+
+  // Redstone Wire Off / On (cross dust line)
+  for (let i = 0; i < 16; i++) {
+    drawTilePixel(ctx, Tile.RedstoneWireOff, i, 7, '#5c0f0f');
+    drawTilePixel(ctx, Tile.RedstoneWireOff, i, 8, '#4a0b0b');
+    drawTilePixel(ctx, Tile.RedstoneWireOff, 7, i, '#5c0f0f');
+    drawTilePixel(ctx, Tile.RedstoneWireOff, 8, i, '#4a0b0b');
+
+    drawTilePixel(ctx, Tile.RedstoneWireOn, i, 7, '#ff2e2e');
+    drawTilePixel(ctx, Tile.RedstoneWireOn, i, 8, '#e61010');
+    drawTilePixel(ctx, Tile.RedstoneWireOn, 7, i, '#ff2e2e');
+    drawTilePixel(ctx, Tile.RedstoneWireOn, 8, i, '#e61010');
+  }
+  for (let x = 6; x <= 9; x++) for (let y = 6; y <= 9; y++) {
+    drawTilePixel(ctx, Tile.RedstoneWireOff, x, y, '#731414');
+    drawTilePixel(ctx, Tile.RedstoneWireOn, x, y, '#ff7a7a');
+  }
+
+  // Redstone Torch
+  for (let y = 6; y < 16; y++) {
+    drawTilePixel(ctx, Tile.RedstoneTorch, 7, y, '#7c5933');
+    drawTilePixel(ctx, Tile.RedstoneTorch, 8, y, '#593e22');
+  }
+  for (let y = 2; y <= 6; y++) {
+    for (let x = 7; x <= 8; x++) {
+      drawTilePixel(ctx, Tile.RedstoneTorch, x, y, y <= 4 ? '#ff8f8f' : '#eb1c1c');
+    }
+  }
+
+  // Lever icon
+  for (let x = 5; x <= 10; x++) for (let y = 11; y <= 14; y++) {
+    drawTilePixel(ctx, Tile.Lever, x, y, (x + y) % 2 === 0 ? '#787878' : '#5e5e5e');
+  }
+  for (let i = 0; i < 7; i++) {
+    drawTilePixel(ctx, Tile.Lever, 7 + Math.floor(i * 0.4), 11 - i, '#7c5933');
+  }
+  drawTilePixel(ctx, Tile.Lever, 9, 4, '#d12626');
+
+  // Redstone Lamp Off & On
+  for (let y = 0; y < 16; y++) {
+    for (let x = 0; x < 16; x++) {
+      const border = x === 0 || x === 15 || y === 0 || y === 15 || ((x === 4 || x === 11) && y > 1 && y < 14);
+      drawTilePixel(ctx, Tile.RedstoneLampOff, x, y, border ? '#422c1b' : '#735133');
+      drawTilePixel(ctx, Tile.RedstoneLampOn, x, y, border ? '#785028' : '#ffe88a');
+    }
+  }
+
+  // Deepslate (deep charcoal layered slate)
+  for (let y = 0; y < 16; y++) {
+    for (let x = 0; x < 16; x++) {
+      const strata = pxHash(Math.floor(x / 3), y, 108);
+      const grain = pxHash(x, y, 158);
+      const cols = ['#38383d', '#44444a', '#2e2e33', '#4f4f56', '#333338'];
+      const idx = Math.floor((strata * 0.65 + grain * 0.35) * cols.length);
+      drawTilePixel(ctx, Tile.Deepslate, x, y, cols[Math.min(cols.length - 1, idx)]);
+    }
+  }
+
+  // Copper Ore (warm orange-copper + oxidized teal flecks on stone)
+  drawOre(ctx, Tile.CopperOre, '#9e532b', '#d9763b', '#3fa88c', 38);
+
+  // Copper Block (burnished beveled copper tiles)
+  fillNoiseTile(ctx, Tile.CopperBlock, ['#c46b43', '#b85f39', '#d1784e', '#ab5430'], 109);
+  for (let i = 0; i < 16; i++) {
+    drawTilePixel(ctx, Tile.CopperBlock, i, 0, '#e3936b');
+    drawTilePixel(ctx, Tile.CopperBlock, 0, i, '#e3936b');
+    drawTilePixel(ctx, Tile.CopperBlock, i, 15, '#82391c');
+    drawTilePixel(ctx, Tile.CopperBlock, 15, i, '#82391c');
+    if (i % 4 === 0 && i > 0 && i < 15) {
+      drawTilePixel(ctx, Tile.CopperBlock, i, 7, '#8f4122');
+      drawTilePixel(ctx, Tile.CopperBlock, 7, i, '#8f4122');
+    }
+  }
+
+  // Cherry Grove Wood, Pink Sakura Leaves & Planks
+  drawLog(ctx, Tile.CherryLogSide, Tile.CherryLogTop, ['#3b242b', '#4d3038', '#5e3c45', '#2e1b21'], '#c78c8b', '#dea8a7');
+  drawLeaves(ctx, Tile.CherryLeaves, ['#f7b2cc', '#f9c7db', '#eb8fb3', '#ffdbe9'], 209);
+  drawPlanks(ctx, Tile.CherryPlanks, ['#e09da8', '#ebaab4', '#cf8d98', '#d996a1'], '#f5bcc5', '#9e626c');
+
+  // Amethyst Crystal Block
+  fillNoiseTile(ctx, Tile.AmethystBlock, ['#7a49b8', '#8d59cf', '#63379c', '#a371e3'], 112);
+  for (let i = 2; i <= 13; i++) {
+    drawTilePixel(ctx, Tile.AmethystBlock, i, 15 - i, '#cfa8ff');
+    drawTilePixel(ctx, Tile.AmethystBlock, Math.min(15, i + 1), 15 - i, '#b685f5');
+  }
+  drawTilePixel(ctx, Tile.AmethystBlock, 4, 4, '#f0e0ff');
+  drawTilePixel(ctx, Tile.AmethystBlock, 11, 10, '#f0e0ff');
+
   const atlasTexture = new THREE.CanvasTexture(canvas);
   atlasTexture.magFilter = THREE.NearestFilter;
   atlasTexture.minFilter = THREE.NearestFilter;
@@ -947,17 +1110,20 @@ function drawPixelItemSprite(ctx: CanvasRenderingContext2D, id: ItemId) {
       px(6, 5, '#525252');
       break;
     case 'iron_ingot':
-    case 'gold_ingot': {
-      const hi = id === 'iron_ingot' ? '#ffffff' : '#fff899';
-      const c1 = id === 'iron_ingot' ? '#dcdcdc' : '#fcee4b';
-      const c2 = id === 'iron_ingot' ? '#969696' : '#c99316';
+    case 'gold_ingot':
+    case 'copper_ingot': {
+      const hi = id === 'iron_ingot' ? '#ffffff' : id === 'copper_ingot' ? '#f2a47e' : '#fff899';
+      const c1 = id === 'iron_ingot' ? '#dcdcdc' : id === 'copper_ingot' ? '#cf6e42' : '#fcee4b';
+      const c2 = id === 'iron_ingot' ? '#969696' : id === 'copper_ingot' ? '#8c3f1d' : '#c99316';
       for (let x = 3; x <= 12; x++) for (let y = 5; y <= 10; y++) px(x, y, y === 5 ? hi : y > 8 ? c2 : c1);
       break;
     }
     case 'raw_iron':
-    case 'raw_gold': {
-      const c1 = id === 'raw_iron' ? '#d8b498' : '#f7d53b';
-      for (let x = 4; x <= 11; x++) for (let y = 4; y <= 11; y++) px(x, y, (x + y) % 2 === 0 ? c1 : '#9c7858');
+    case 'raw_gold':
+    case 'raw_copper': {
+      const c1 = id === 'raw_iron' ? '#d8b498' : id === 'raw_copper' ? '#d9763b' : '#f7d53b';
+      const c2 = id === 'raw_copper' ? '#3fa88c' : '#9c7858';
+      for (let x = 4; x <= 11; x++) for (let y = 4; y <= 11; y++) px(x, y, (x + y) % 2 === 0 ? c1 : c2);
       break;
     }
     case 'diamond':
@@ -1004,6 +1170,11 @@ function drawPixelItemSprite(ctx: CanvasRenderingContext2D, id: ItemId) {
       for (let x = 4; x <= 11; x++) for (let y = 5; y <= 11; y++) if ((x + y) % 2 === 0) px(x, y, col);
       break;
     }
+    case 'quartz':
+      for (let x = 5; x <= 10; x++) for (let y = 4; y <= 11; y++) {
+        px(x, y, x < 7 ? '#ffffff' : y > 9 ? '#d1c7ba' : '#ede6dc');
+      }
+      break;
     case 'leather':
       for (let x = 4; x <= 11; x++) for (let y = 4; y <= 11; y++) px(x, y, '#9c582d');
       break;
@@ -1057,8 +1228,172 @@ function drawPixelItemSprite(ctx: CanvasRenderingContext2D, id: ItemId) {
       for (let x = 5; x <= 10; x++) px(x, 6, fill);
       break;
     }
+    case 'shield': {
+      for (let x = 3; x <= 12; x++) {
+        for (let y = 2; y <= 13; y++) {
+          const rim = x === 3 || x === 12 || y === 2 || y === 13;
+          px(x, y, rim ? '#b8b8b8' : (x + y) % 2 === 0 ? '#9c7444' : '#856035');
+        }
+      }
+      px(7, 7, '#6b6b6b'); px(8, 7, '#6b6b6b'); px(7, 8, '#6b6b6b'); px(8, 8, '#6b6b6b');
+      break;
+    }
+    case 'spyglass': {
+      for (let i = 3; i <= 10; i++) {
+        px(i, 15 - i, '#cf6e42');
+        px(i + 1, 15 - i, '#8c3f1d');
+      }
+      px(11, 3, '#a371e3'); px(12, 3, '#cfa8ff'); px(11, 4, '#a371e3'); px(12, 4, '#7a49b8');
+      break;
+    }
+    case 'mace': {
+      for (let i = 2; i <= 9; i++) {
+        px(i, 15 - i, '#6d4c2c');
+        px(i, 14 - i, '#8a6239');
+      }
+      for (let x = 9; x <= 13; x++) {
+        for (let y = 2; y <= 6; y++) {
+          const rim = x === 9 || x === 13 || y === 2 || y === 6;
+          px(x, y, rim ? '#4a5568' : '#3ee4e0');
+        }
+      }
+      px(11, 4, '#ffffff');
+      break;
+    }
     default:
       for (let x = 4; x <= 11; x++) for (let y = 4; y <= 11; y++) px(x, y, '#c4b89b');
       break;
   }
 }
+
+const extrudedItemGeoCache = new Map<string, THREE.BufferGeometry>();
+
+/**
+ * Builds and caches a crisp 3D extruded voxel BufferGeometry from a 16x16 item sprite
+ * or flat block tile so held tools, weapons, food, torches, and shields have real 3D thickness.
+ */
+export function createExtrudedItemGeometry(
+  itemId: ItemId,
+  atlasCanvas?: HTMLCanvasElement
+): THREE.BufferGeometry {
+  const cached = extrudedItemGeoCache.get(itemId);
+  if (cached) return cached;
+
+  const c = document.createElement('canvas');
+  c.width = 16;
+  c.height = 16;
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+
+  if (itemId.startsWith('block:') && atlasCanvas) {
+    const blockId = Number(itemId.slice(6)) as BlockId;
+    const tile = getBlockFaceTile(blockId, 'pz');
+    const colIdx = tile % ATLAS_COLS;
+    const rowIdx = Math.floor(tile / ATLAS_COLS);
+    ctx.drawImage(
+      atlasCanvas,
+      colIdx * TILE_PX,
+      rowIdx * TILE_PX,
+      TILE_PX,
+      TILE_PX,
+      0,
+      0,
+      16,
+      16
+    );
+  } else {
+    // drawPixelItemSprite writes 32x32 (2x2 per pixel), so render on 32x32 then downsample 16x16
+    const tmp = document.createElement('canvas');
+    tmp.width = 32;
+    tmp.height = 32;
+    const tctx = tmp.getContext('2d')!;
+    tctx.imageSmoothingEnabled = false;
+    drawPixelItemSprite(tctx, itemId);
+    ctx.drawImage(tmp, 0, 0, 32, 32, 0, 0, 16, 16);
+  }
+
+  const img = ctx.getImageData(0, 0, 16, 16).data;
+  const isOpaque = (x: number, y: number) => {
+    if (x < 0 || x >= 16 || y < 0 || y >= 16) return false;
+    return img[(y * 16 + x) * 4 + 3] > 60;
+  };
+
+  const pos: number[] = [];
+  const norm: number[] = [];
+  const col: number[] = [];
+  const idx: number[] = [];
+  const tmpColor = new THREE.Color();
+
+  const pxSize = 1 / 16;
+  const halfDepth = pxSize * 0.52;
+
+  const pushQuad = (
+    p0: [number, number, number],
+    p1: [number, number, number],
+    p2: [number, number, number],
+    p3: [number, number, number],
+    nx: number,
+    ny: number,
+    nz: number,
+    r: number,
+    g: number,
+    b: number,
+    shade: number
+  ) => {
+    const base = pos.length / 3;
+    pos.push(...p0, ...p1, ...p2, ...p3);
+    for (let k = 0; k < 4; k++) {
+      norm.push(nx, ny, nz);
+      col.push(r * shade, g * shade, b * shade);
+    }
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+
+  for (let y = 0; y < 16; y++) {
+    for (let x = 0; x < 16; x++) {
+      const off = (y * 16 + x) * 4;
+      if (img[off + 3] <= 60) continue;
+
+      tmpColor.setRGB(img[off] / 255, img[off + 1] / 255, img[off + 2] / 255, THREE.SRGBColorSpace);
+      const r = tmpColor.r;
+      const g = tmpColor.g;
+      const b = tmpColor.b;
+
+      const x0 = (x - 8) * pxSize;
+      const x1 = x0 + pxSize;
+      const y1 = (8 - y) * pxSize;
+      const y0 = y1 - pxSize;
+      const z0 = -halfDepth;
+      const z1 = halfDepth;
+
+      // Front (+Z) & Back (-Z)
+      pushQuad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], 0, 0, 1, r, g, b, 1.0);
+      pushQuad([x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0], 0, 0, -1, r, g, b, 0.88);
+
+      // Perimeter extruded edges only where neighbor pixel is transparent
+      if (!isOpaque(x - 1, y)) {
+        pushQuad([x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0], -1, 0, 0, r, g, b, 0.78);
+      }
+      if (!isOpaque(x + 1, y)) {
+        pushQuad([x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1], 1, 0, 0, r, g, b, 0.84);
+      }
+      if (!isOpaque(x, y - 1)) {
+        pushQuad([x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0], 0, 1, 0, r, g, b, 0.96);
+      }
+      if (!isOpaque(x, y + 1)) {
+        pushQuad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], 0, -1, 0, r, g, b, 0.7);
+      }
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(norm, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  geo.computeBoundingSphere();
+
+  extrudedItemGeoCache.set(itemId, geo);
+  return geo;
+}
+

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { BlockId, BiomeType } from '../types/game';
+import { BlockId, BiomeType, DimensionType, GraphicsQuality, LeafQuality } from '../types/game';
 import { BLOCKS } from '../data/itemsAndBlocks';
 import { SeededNoise } from './noise';
 import { ATLAS_COLS, ATLAS_ROWS, FaceDir, Tile, getBlockFaceTile } from './textures';
@@ -8,15 +8,52 @@ export const CHUNK_SIZE = 16;
 export const CHUNK_HEIGHT = 64;
 export const SEA_LEVEL = 22;
 
+export interface LightEmitter {
+  x: number;
+  y: number;
+  z: number;
+  power: number;
+}
+
 export interface ChunkData {
   cx: number;
   cz: number;
   blocks: Uint8Array;
+  fluidLevels: Uint8Array;
+  skyTopY: Uint8Array;
+  lightEmitters: LightEmitter[];
+  emittersDirty: boolean;
   opaqueMesh: THREE.Mesh | null;
   cutoutMesh: THREE.Mesh | null;
+  leavesMesh: THREE.Mesh | null;
   liquidMesh: THREE.Mesh | null;
   dirty: boolean;
 }
+
+// Reusable scratch buffers to eliminate per-chunk GC allocations
+const _opPos: number[] = [];
+const _opNorm: number[] = [];
+const _opUv: number[] = [];
+const _opCol: number[] = [];
+const _opIdx: number[] = [];
+
+const _cutPos: number[] = [];
+const _cutNorm: number[] = [];
+const _cutUv: number[] = [];
+const _cutCol: number[] = [];
+const _cutIdx: number[] = [];
+
+const _leafPos: number[] = [];
+const _leafNorm: number[] = [];
+const _leafUv: number[] = [];
+const _leafCol: number[] = [];
+const _leafIdx: number[] = [];
+
+const _liqPos: number[] = [];
+const _liqNorm: number[] = [];
+const _liqUv: number[] = [];
+const _liqCol: number[] = [];
+const _liqIdx: number[] = [];
 
 export interface VoxelHit {
   x: number;
@@ -146,17 +183,31 @@ function chunkKey(cx: number, cz: number): string {
 
 export class VoxelWorld {
   public noise: SeededNoise;
+  public dimension: DimensionType;
   public chunks = new Map<string, ChunkData>();
   public deltas = new Map<string, BlockId>(); // "x,y,z" -> BlockId for player modifications
+  public fluidDeltas = new Map<string, number>();
   public structureChests: { x: number; y: number; z: number }[] = [];
   public group = new THREE.Group();
 
   private opaqueMat: THREE.MeshLambertMaterial;
   private cutoutMat: THREE.MeshLambertMaterial;
+  private leavesMat: THREE.MeshLambertMaterial;
   private liquidMat: THREE.MeshLambertMaterial;
 
-  constructor(seed: number, atlasTexture: THREE.Texture) {
+  private leavesUniforms = {
+    uFastLeaves: { value: 0 },
+  };
+  private liquidUniforms = {
+    uTime: { value: 0 },
+    uVibrant: { value: 1 },
+    uSunDir: { value: new THREE.Vector3(0.4, 0.85, 0.2).normalize() },
+    uSkyTint: { value: new THREE.Color(0x78a7ff) },
+  };
+
+  constructor(seed: number, atlasTexture: THREE.Texture, dimension: DimensionType = 'overworld') {
     this.noise = new SeededNoise(seed);
+    this.dimension = dimension;
 
     this.opaqueMat = new THREE.MeshLambertMaterial({
       map: atlasTexture,
@@ -170,6 +221,30 @@ export class VoxelWorld {
       side: THREE.DoubleSide,
     });
 
+    this.leavesMat = new THREE.MeshLambertMaterial({
+      map: atlasTexture,
+      vertexColors: true,
+      side: THREE.DoubleSide,
+    });
+    this.leavesMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uFastLeaves = this.leavesUniforms.uFastLeaves;
+      shader.fragmentShader = 'uniform float uFastLeaves;\n' + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        `
+        #include <color_fragment>
+        if (uFastLeaves > 0.5) {
+          if (diffuseColor.a < 0.45) {
+            diffuseColor.rgb = vColor.rgb * 0.22;
+          }
+          diffuseColor.a = 1.0;
+        } else {
+          if (diffuseColor.a < 0.45) discard;
+        }
+        `
+      );
+    };
+
     this.liquidMat = new THREE.MeshLambertMaterial({
       map: atlasTexture,
       vertexColors: true,
@@ -178,17 +253,89 @@ export class VoxelWorld {
       depthWrite: false,
       side: THREE.DoubleSide,
     });
+    this.liquidMat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = this.liquidUniforms.uTime;
+      shader.uniforms.uVibrant = this.liquidUniforms.uVibrant;
+      shader.uniforms.uSunDir = this.liquidUniforms.uSunDir;
+      shader.uniforms.uSkyTint = this.liquidUniforms.uSkyTint;
+
+      shader.vertexShader =
+        'varying vec3 vWaterWorldPos;\nvarying vec3 vWaterNormal;\n' + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+        vWaterWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        vWaterNormal = normal;
+        `
+      );
+
+      shader.fragmentShader =
+        `
+        uniform float uTime;
+        uniform float uVibrant;
+        uniform vec3 uSunDir;
+        uniform vec3 uSkyTint;
+        varying vec3 vWaterWorldPos;
+        varying vec3 vWaterNormal;
+        ` + shader.fragmentShader;
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        `
+        #include <color_fragment>
+        bool isWaterPixel = diffuseColor.b > diffuseColor.r * 1.15;
+        if (isWaterPixel) {
+          vec2 pixPos = floor(vWaterWorldPos.xz * 16.0) / 16.0;
+          float waveA = sin(pixPos.x * 3.1 + pixPos.y * 2.4 + uTime * 2.6);
+          float waveB = cos(pixPos.x * 2.1 - pixPos.y * 3.7 + uTime * 1.9);
+          float ripple = (waveA + waveB) * 0.5;
+          diffuseColor.rgb += vec3(0.05, 0.09, 0.14) * max(0.0, ripple);
+
+          if (uVibrant > 0.1) {
+            vec3 viewDir = normalize(cameraPosition - vWaterWorldPos);
+            vec3 nrm = normalize(vWaterNormal + vec3(waveA * 0.08, 0.0, waveB * 0.08) * uVibrant);
+            float fresnel = pow(1.0 - max(0.0, dot(viewDir, nrm)), 3.0);
+            vec3 halfVec = normalize(uSunDir + viewDir);
+            float spec = pow(max(0.0, dot(nrm, halfVec)), 42.0) * step(0.1, uSunDir.y);
+            diffuseColor.rgb = mix(diffuseColor.rgb, uSkyTint * 1.12, fresnel * 0.45 * uVibrant);
+            diffuseColor.rgb += vec3(1.0, 0.96, 0.85) * spec * 0.65 * uVibrant;
+            diffuseColor.a = clamp(0.74 + fresnel * 0.22 * uVibrant, 0.72, 0.96);
+          }
+        } else {
+          // Lava or Nether Portal animated shimmer
+          float pulse = 0.92 + 0.12 * sin(vWaterWorldPos.x * 2.3 + vWaterWorldPos.y * 2.7 + uTime * 3.4);
+          diffuseColor.rgb *= pulse;
+        }
+        `
+      );
+    };
+  }
+
+  public setRenderSettings(
+    quality: GraphicsQuality,
+    leafQuality: LeafQuality,
+    sunDir: THREE.Vector3,
+    skyColor: THREE.Color,
+    time: number
+  ) {
+    this.leavesUniforms.uFastLeaves.value = leafQuality === 'fast' || quality === 'fast' ? 1 : 0;
+    this.liquidUniforms.uVibrant.value = quality === 'vibrant' ? 1.0 : quality === 'fancy' ? 0.3 : 0.0;
+    this.liquidUniforms.uSunDir.value.copy(sunDir).normalize();
+    this.liquidUniforms.uSkyTint.value.copy(skyColor);
+    this.liquidUniforms.uTime.value = time;
   }
 
   public dispose() {
     for (const ch of this.chunks.values()) {
       ch.opaqueMesh?.geometry.dispose();
       ch.cutoutMesh?.geometry.dispose();
+      ch.leavesMesh?.geometry.dispose();
       ch.liquidMesh?.geometry.dispose();
     }
     this.chunks.clear();
     this.opaqueMat.dispose();
     this.cutoutMat.dispose();
+    this.leavesMat.dispose();
     this.liquidMat.dispose();
   }
 
@@ -207,7 +354,18 @@ export class VoxelWorld {
     return ch.blocks[lx + lz * CHUNK_SIZE + wy * CHUNK_SIZE * CHUNK_SIZE] as BlockId;
   }
 
-  public setBlock(wx: number, wy: number, wz: number, id: BlockId, recordDelta = true) {
+  public getFluidLevel(wx: number, wy: number, wz: number): number {
+    if (wy < 0 || wy >= CHUNK_HEIGHT) return 0;
+    const cx = Math.floor(wx / CHUNK_SIZE);
+    const cz = Math.floor(wz / CHUNK_SIZE);
+    const ch = this.chunks.get(chunkKey(cx, cz));
+    if (!ch) return 0;
+    const lx = wx - cx * CHUNK_SIZE;
+    const lz = wz - cz * CHUNK_SIZE;
+    return ch.fluidLevels[lx + lz * CHUNK_SIZE + wy * CHUNK_SIZE * CHUNK_SIZE];
+  }
+
+  public setFluidLevel(wx: number, wy: number, wz: number, level: number, recordDelta = true) {
     if (wy < 0 || wy >= CHUNK_HEIGHT) return;
     const cx = Math.floor(wx / CHUNK_SIZE);
     const cz = Math.floor(wz / CHUNK_SIZE);
@@ -216,12 +374,43 @@ export class VoxelWorld {
     const lx = wx - cx * CHUNK_SIZE;
     const lz = wz - cz * CHUNK_SIZE;
     const idx = lx + lz * CHUNK_SIZE + wy * CHUNK_SIZE * CHUNK_SIZE;
-    if (ch.blocks[idx] === id) return;
-    ch.blocks[idx] = id;
+    if (ch.fluidLevels[idx] === level) return;
+    ch.fluidLevels[idx] = level;
     ch.dirty = true;
+    if (recordDelta) {
+      if (level === 0) this.fluidDeltas.delete(`${wx},${wy},${wz}`);
+      else this.fluidDeltas.set(`${wx},${wy},${wz}`, level);
+    }
+    if (lx === 0) this.markDirty(cx - 1, cz);
+    if (lx === CHUNK_SIZE - 1) this.markDirty(cx + 1, cz);
+    if (lz === 0) this.markDirty(cx, cz - 1);
+    if (lz === CHUNK_SIZE - 1) this.markDirty(cx, cz + 1);
+  }
+
+  public setBlock(wx: number, wy: number, wz: number, id: BlockId, recordDelta = true, fluidLevel = 0) {
+    if (wy < 0 || wy >= CHUNK_HEIGHT) return;
+    const cx = Math.floor(wx / CHUNK_SIZE);
+    const cz = Math.floor(wz / CHUNK_SIZE);
+    const ch = this.chunks.get(chunkKey(cx, cz));
+    if (!ch) return;
+    const lx = wx - cx * CHUNK_SIZE;
+    const lz = wz - cz * CHUNK_SIZE;
+    const idx = lx + lz * CHUNK_SIZE + wy * CHUNK_SIZE * CHUNK_SIZE;
+    const nextLevel = BLOCKS[id].liquid ? fluidLevel : 0;
+    const prevId = ch.blocks[idx] as BlockId;
+    if (prevId === id && ch.fluidLevels[idx] === nextLevel) return;
+    ch.blocks[idx] = id;
+    ch.fluidLevels[idx] = nextLevel;
+    ch.dirty = true;
+    if (BLOCKS[prevId].lightLevel > 0 || BLOCKS[id].lightLevel > 0) {
+      ch.emittersDirty = true;
+    }
+    this.recomputeColumnSkyTop(ch, lx, lz);
 
     if (recordDelta) {
       this.deltas.set(`${wx},${wy},${wz}`, id);
+      if (nextLevel === 0) this.fluidDeltas.delete(`${wx},${wy},${wz}`);
+      else this.fluidDeltas.set(`${wx},${wy},${wz}`, nextLevel);
     }
 
     // Mark neighbor chunks dirty when touching chunk borders
@@ -236,12 +425,91 @@ export class VoxelWorld {
     if (ch) ch.dirty = true;
   }
 
-  public getTopSolidY(wx: number, wz: number): number {
-    for (let y = CHUNK_HEIGHT - 1; y >= 1; y--) {
-      const b = this.getBlock(wx, y, wz);
-      if (BLOCKS[b].solid || BLOCKS[b].liquid) return y + 1;
+  private recomputeColumnSkyTop(ch: ChunkData, lx: number, lz: number) {
+    let top = 0;
+    const base = lx + lz * CHUNK_SIZE;
+    const stride = CHUNK_SIZE * CHUNK_SIZE;
+    for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+      const b = ch.blocks[base + y * stride] as BlockId;
+      if (b !== BlockId.Air && !BLOCKS[b].transparent) {
+        top = y;
+        break;
+      }
     }
-    return 32;
+    ch.skyTopY[base] = top;
+  }
+
+  private recomputeAllSkyTopAndEmitters(ch: ChunkData) {
+    ch.lightEmitters.length = 0;
+    const stride = CHUNK_SIZE * CHUNK_SIZE;
+    const baseX = ch.cx * CHUNK_SIZE;
+    const baseZ = ch.cz * CHUNK_SIZE;
+    for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+      for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+        const col = lx + lz * CHUNK_SIZE;
+        let top = 0;
+        for (let y = CHUNK_HEIGHT - 1; y >= 0; y--) {
+          const b = ch.blocks[col + y * stride] as BlockId;
+          if (b !== BlockId.Air) {
+            if (top === 0 && !BLOCKS[b].transparent) {
+              top = y;
+            }
+            const ll = BLOCKS[b].lightLevel;
+            if (ll > 0) {
+              ch.lightEmitters.push({
+                x: baseX + lx,
+                y,
+                z: baseZ + lz,
+                power: ll / 15,
+              });
+            }
+          }
+        }
+        ch.skyTopY[col] = top;
+      }
+    }
+    ch.emittersDirty = false;
+  }
+
+  private ensureChunkEmitters(ch: ChunkData) {
+    if (!ch.emittersDirty) return;
+    ch.lightEmitters.length = 0;
+    const stride = CHUNK_SIZE * CHUNK_SIZE;
+    const baseX = ch.cx * CHUNK_SIZE;
+    const baseZ = ch.cz * CHUNK_SIZE;
+    for (let y = 0; y < CHUNK_HEIGHT; y++) {
+      const yOff = y * stride;
+      for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+        const zOff = yOff + lz * CHUNK_SIZE;
+        for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+          const b = ch.blocks[zOff + lx] as BlockId;
+          if (b !== BlockId.Air) {
+            const ll = BLOCKS[b].lightLevel;
+            if (ll > 0) {
+              ch.lightEmitters.push({
+                x: baseX + lx,
+                y,
+                z: baseZ + lz,
+                power: ll / 15,
+              });
+            }
+          }
+        }
+      }
+    }
+    ch.emittersDirty = false;
+  }
+
+  public getTopSolidY(wx: number, wz: number): number {
+    const startY = this.dimension === 'nether' ? 46 : CHUNK_HEIGHT - 1;
+    for (let y = startY; y >= 1; y--) {
+      const b = this.getBlock(wx, y, wz);
+      if (BLOCKS[b].solid || BLOCKS[b].liquid) {
+        if (this.dimension === 'nether' && y >= 48) continue;
+        return y + 1;
+      }
+    }
+    return this.dimension === 'nether' ? 20 : 32;
   }
 
   public ensureChunk(cx: number, cz: number): ChunkData {
@@ -249,18 +517,26 @@ export class VoxelWorld {
     const existing = this.chunks.get(key);
     if (existing) return existing;
 
-    const blocks = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT);
+    const size = CHUNK_SIZE * CHUNK_SIZE * CHUNK_HEIGHT;
+    const blocks = new Uint8Array(size);
+    const fluidLevels = new Uint8Array(size);
     const ch: ChunkData = {
       cx,
       cz,
       blocks,
+      fluidLevels,
+      skyTopY: new Uint8Array(CHUNK_SIZE * CHUNK_SIZE),
+      lightEmitters: [],
+      emittersDirty: false,
       opaqueMesh: null,
       cutoutMesh: null,
+      leavesMesh: null,
       liquidMesh: null,
       dirty: true,
     };
     this.chunks.set(key, ch);
     this.generateChunkBlocks(ch);
+    this.recomputeAllSkyTopAndEmitters(ch);
 
     // Mark adjacent chunks dirty so border faces cull cleanly
     this.markDirty(cx - 1, cz);
@@ -286,6 +562,57 @@ export class VoxelWorld {
   private generateChunkBlocks(ch: ChunkData) {
     const baseX = ch.cx * CHUNK_SIZE;
     const baseZ = ch.cz * CHUNK_SIZE;
+
+    if (this.dimension === 'nether') {
+      for (let lz = 0; lz < CHUNK_SIZE; lz++) {
+        for (let lx = 0; lx < CHUNK_SIZE; lx++) {
+          const wx = baseX + lx;
+          const wz = baseZ + lz;
+          const floorH = Math.floor(16 + this.noise.fbm2D(wx * 0.03, wz * 0.03, 3) * 10);
+          const ceilH = Math.floor(50 + this.noise.fbm2D(wx * 0.035 + 120, wz * 0.035 - 80, 3) * 7);
+
+          for (let y = 0; y < CHUNK_HEIGHT; y++) {
+            let block = BlockId.Air;
+            if (y === 0 || y === CHUNK_HEIGHT - 1 || ((y === 1 || y === CHUNK_HEIGHT - 2) && this.noise.hash3D(wx, y, wz) < 0.55)) {
+              block = BlockId.Bedrock;
+            } else if (y <= floorH || y >= ceilH) {
+              const cavern = Math.abs(this.noise.noise3D(wx * 0.06, y * 0.075, wz * 0.06));
+              if (cavern < 0.09 && y > 6 && y < CHUNK_HEIGHT - 4) {
+                block = y <= 14 ? BlockId.Lava : BlockId.Air;
+              } else {
+                const h = this.noise.hash3D(wx, y, wz);
+                if (y <= floorH && y >= 13 && y <= 18 && this.noise.fbm2D(wx * 0.08 + 40, wz * 0.08, 2) > 0.25) {
+                  block = BlockId.SoulSand;
+                } else if (y >= ceilH && y <= ceilH + 2 && h < 0.045) {
+                  block = BlockId.Glowstone;
+                } else if (h < 0.035) {
+                  block = BlockId.NetherQuartzOre;
+                } else {
+                  block = BlockId.Netherrack;
+                }
+              }
+            } else if (y <= 14) {
+              block = BlockId.Lava;
+            }
+            this.setLocal(ch, lx, y, lz, block);
+          }
+        }
+      }
+
+      for (const [k, bId] of this.deltas) {
+        const [dx, dy, dz] = k.split(',').map(Number);
+        if (Math.floor(dx / CHUNK_SIZE) === ch.cx && Math.floor(dz / CHUNK_SIZE) === ch.cz) {
+          this.setLocal(ch, dx - baseX, dy, dz - baseZ, bId);
+        }
+      }
+      for (const [k, lvl] of this.fluidDeltas) {
+        const [dx, dy, dz] = k.split(',').map(Number);
+        if (Math.floor(dx / CHUNK_SIZE) === ch.cx && Math.floor(dz / CHUNK_SIZE) === ch.cz && dy >= 0 && dy < CHUNK_HEIGHT) {
+          ch.fluidLevels[(dx - baseX) + (dz - baseZ) * CHUNK_SIZE + dy * CHUNK_SIZE * CHUNK_SIZE] = lvl;
+        }
+      }
+      return;
+    }
 
     const surfaceYGrid = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
     const biomeGrid: BiomeType[] = new Array(CHUNK_SIZE * CHUNK_SIZE);
@@ -334,15 +661,19 @@ export class VoxelWorld {
             } else if (y >= surfY - 3) {
               block = biome === 'desert' ? BlockId.Sand : surfY < SEA_LEVEL ? BlockId.Sand : BlockId.Dirt;
             } else {
-              // Stone & Ores
-              block = BlockId.Stone;
+              // Stone, Deepslate, Amethyst Geodes & Ores
+              const isDeepslate = y <= 8 || (y <= 11 && this.noise.hash3D(wx, y, wz) > (y - 8) * 0.35);
+              block = isDeepslate ? BlockId.Deepslate : BlockId.Stone;
               const h = this.noise.hash3D(wx, y, wz);
-              if (y <= 14 && h < 0.008) block = BlockId.DiamondOre;
+              if (y >= 4 && y <= 14 && Math.abs(this.noise.noise3D(wx * 0.08 + 77, y * 0.08, wz * 0.08 - 77)) < 0.025) {
+                block = BlockId.AmethystBlock;
+              } else if (y <= 14 && h < 0.008) block = BlockId.DiamondOre;
               else if (y <= 18 && h < 0.018) block = BlockId.RedstoneOre;
               else if (y <= 22 && h < 0.024) block = BlockId.GoldOre;
               else if (y <= 24 && biome === 'mountains' && h < 0.027) block = BlockId.EmeraldOre;
               else if (y <= 24 && h < 0.032) block = BlockId.LapisOre;
               else if (y <= 38 && h < 0.052) block = BlockId.IronOre;
+              else if (y >= 12 && y <= 35 && h >= 0.12 && h < 0.145) block = BlockId.CopperOre;
               else if (h < 0.082) block = BlockId.CoalOre;
               else if (h > 0.985) block = BlockId.Gravel;
             }
@@ -378,14 +709,35 @@ export class VoxelWorld {
         if (topBlock !== BlockId.GrassBlock && topBlock !== BlockId.SnowBlock) continue;
 
         const treeChance =
-          biome === 'forest' ? 0.045 : biome === 'taiga' ? 0.035 : biome === 'plains' ? 0.008 : 0.01;
+          biome === 'forest'
+            ? 0.045
+            : biome === 'taiga'
+              ? 0.035
+              : biome === 'cherry'
+                ? 0.028
+                : biome === 'plains'
+                  ? 0.008
+                  : 0.01;
 
         if (r < treeChance) {
+          const isCherry = biome === 'cherry';
           const isBirch = biome === 'forest' && this.noise.hash2D(wx + 55, wz - 55) < 0.35;
           const isSpruce = biome === 'taiga';
-          const log = isSpruce ? BlockId.SpruceLog : isBirch ? BlockId.BirchLog : BlockId.OakLog;
-          const leaves = isSpruce ? BlockId.SpruceLeaves : isBirch ? BlockId.BirchLeaves : BlockId.OakLeaves;
-          const trunkH = isSpruce ? 5 + Math.floor(r * 40) % 2 : 4 + Math.floor(r * 60) % 2;
+          const log = isCherry
+            ? BlockId.CherryLog
+            : isSpruce
+              ? BlockId.SpruceLog
+              : isBirch
+                ? BlockId.BirchLog
+                : BlockId.OakLog;
+          const leaves = isCherry
+            ? BlockId.CherryLeaves
+            : isSpruce
+              ? BlockId.SpruceLeaves
+              : isBirch
+                ? BlockId.BirchLeaves
+                : BlockId.OakLeaves;
+          const trunkH = isSpruce || isCherry ? 5 + Math.floor(r * 40) % 2 : 4 + Math.floor(r * 60) % 2;
 
           for (let dy = 1; dy <= trunkH; dy++) {
             this.setLocal(ch, lx, surfY + dy, lz, log);
@@ -406,7 +758,7 @@ export class VoxelWorld {
           if (r > 0.86 && r < 0.95) {
             this.setLocal(ch, lx, surfY + 1, lz, BlockId.TallGrass);
           } else if (r >= 0.95 && r < 0.975) {
-            this.setLocal(ch, lx, surfY + 1, lz, BlockId.Dandelion);
+            this.setLocal(ch, lx, surfY + 1, lz, biome === 'cherry' ? BlockId.Poppy : BlockId.Dandelion);
           } else if (r >= 0.975) {
             this.setLocal(ch, lx, surfY + 1, lz, BlockId.Poppy);
           }
@@ -469,11 +821,17 @@ export class VoxelWorld {
       }
     }
 
-    // Re-apply saved block deltas inside this chunk
+    // Re-apply saved block & fluid deltas inside this chunk
     for (const [k, bId] of this.deltas) {
       const [dx, dy, dz] = k.split(',').map(Number);
       if (Math.floor(dx / CHUNK_SIZE) === ch.cx && Math.floor(dz / CHUNK_SIZE) === ch.cz) {
         this.setLocal(ch, dx - baseX, dy, dz - baseZ, bId);
+      }
+    }
+    for (const [k, lvl] of this.fluidDeltas) {
+      const [dx, dy, dz] = k.split(',').map(Number);
+      if (Math.floor(dx / CHUNK_SIZE) === ch.cx && Math.floor(dz / CHUNK_SIZE) === ch.cz && dy >= 0 && dy < CHUNK_HEIGHT) {
+        ch.fluidLevels[(dx - baseX) + (dz - baseZ) * CHUNK_SIZE + dy * CHUNK_SIZE * CHUNK_SIZE] = lvl;
       }
     }
   }
@@ -497,14 +855,27 @@ export class VoxelWorld {
     }
   }
 
-  public updateDirtyChunks(maxPerFrame = 3) {
-    let built = 0;
+  public updateDirtyChunks(maxPerFrame = 3, centerCx = 0, centerCz = 0, budgetMs = 4.5) {
+    const dirty: ChunkData[] = [];
     for (const ch of this.chunks.values()) {
-      if (!ch.dirty) continue;
+      if (ch.dirty) dirty.push(ch);
+    }
+    if (dirty.length === 0) return;
+
+    dirty.sort((a, b) => {
+      const da = (a.cx - centerCx) * (a.cx - centerCx) + (a.cz - centerCz) * (a.cz - centerCz);
+      const db = (b.cx - centerCx) * (b.cx - centerCx) + (b.cz - centerCz) * (b.cz - centerCz);
+      return da - db;
+    });
+
+    const start = performance.now();
+    let built = 0;
+    for (const ch of dirty) {
       this.rebuildChunkGeometry(ch);
       ch.dirty = false;
       built++;
       if (built >= maxPerFrame) break;
+      if (maxPerFrame < 50 && performance.now() - start >= budgetMs) break;
     }
   }
 
@@ -519,6 +890,10 @@ export class VoxelWorld {
         if (ch.cutoutMesh) {
           this.group.remove(ch.cutoutMesh);
           ch.cutoutMesh.geometry.dispose();
+        }
+        if (ch.leavesMesh) {
+          this.group.remove(ch.leavesMesh);
+          ch.leavesMesh.geometry.dispose();
         }
         if (ch.liquidMesh) {
           this.group.remove(ch.liquidMesh);
@@ -535,17 +910,19 @@ export class VoxelWorld {
   }
 
   private getSkyExposure(wx: number, wy: number, wz: number): number {
-    for (let y = wy + 1; y < Math.min(CHUNK_HEIGHT, wy + 16); y++) {
-      const b = this.getBlock(wx, y, wz);
-      if (b !== BlockId.Air && !BLOCKS[b].transparent) {
-        return 0.28;
-      }
-    }
-    return 1.0;
+    if (this.dimension === 'nether') return 0.52;
+    if (wy < 0) return 0.28;
+    const cx = Math.floor(wx / CHUNK_SIZE);
+    const cz = Math.floor(wz / CHUNK_SIZE);
+    const ch = this.chunks.get(chunkKey(cx, cz));
+    if (!ch) return 1.0;
+    const lx = wx - cx * CHUNK_SIZE;
+    const lz = wz - cz * CHUNK_SIZE;
+    return wy >= ch.skyTopY[lx + lz * CHUNK_SIZE] ? 1.0 : 0.28;
   }
 
   private getSkyColumnClear(wx: number, wy: number, wz: number): number {
-    // Smooth sky light across direct column and cardinal neighbors for soft cave-mouth falloff
+    if (this.dimension === 'nether') return 0.52;
     const center = this.getSkyExposure(wx, wy, wz);
     if (center >= 1.0) return 1.0;
     let sum = center * 2;
@@ -554,6 +931,14 @@ export class VoxelWorld {
     sum += this.getSkyExposure(wx, wy, wz + 1);
     sum += this.getSkyExposure(wx, wy, wz - 1);
     return Math.max(0.24, sum / 6);
+  }
+
+  private getFluidTopHeight(wx: number, wy: number, wz: number, fluidId: BlockId): number {
+    if (this.getBlock(wx, wy + 1, wz) === fluidId) return 1.0;
+    const lvl = this.getFluidLevel(wx, wy, wz);
+    if (lvl === 0) return 0.88;
+    if (lvl >= 8) return 0.98;
+    return Math.max(0.14, 0.88 - lvl * 0.1);
   }
 
   private rebuildChunkGeometry(ch: ChunkData) {
@@ -567,43 +952,41 @@ export class VoxelWorld {
       ch.cutoutMesh.geometry.dispose();
       ch.cutoutMesh = null;
     }
+    if (ch.leavesMesh) {
+      this.group.remove(ch.leavesMesh);
+      ch.leavesMesh.geometry.dispose();
+      ch.leavesMesh = null;
+    }
     if (ch.liquidMesh) {
       this.group.remove(ch.liquidMesh);
       ch.liquidMesh.geometry.dispose();
       ch.liquidMesh = null;
     }
 
-    const opPos: number[] = [], opNorm: number[] = [], opUv: number[] = [], opCol: number[] = [], opIdx: number[] = [];
-    const cutPos: number[] = [], cutNorm: number[] = [], cutUv: number[] = [], cutCol: number[] = [], cutIdx: number[] = [];
-    const liqPos: number[] = [], liqNorm: number[] = [], liqUv: number[] = [], liqCol: number[] = [], liqIdx: number[] = [];
+    _opPos.length = 0; _opNorm.length = 0; _opUv.length = 0; _opCol.length = 0; _opIdx.length = 0;
+    _cutPos.length = 0; _cutNorm.length = 0; _cutUv.length = 0; _cutCol.length = 0; _cutIdx.length = 0;
+    _leafPos.length = 0; _leafNorm.length = 0; _leafUv.length = 0; _leafCol.length = 0; _leafIdx.length = 0;
+    _liqPos.length = 0; _liqNorm.length = 0; _liqUv.length = 0; _liqCol.length = 0; _liqIdx.length = 0;
+
+    const opPos = _opPos, opNorm = _opNorm, opUv = _opUv, opCol = _opCol, opIdx = _opIdx;
+    const cutPos = _cutPos, cutNorm = _cutNorm, cutUv = _cutUv, cutCol = _cutCol, cutIdx = _cutIdx;
+    const leafPos = _leafPos, leafNorm = _leafNorm, leafUv = _leafUv, leafCol = _leafCol, leafIdx = _leafIdx;
+    const liqPos = _liqPos, liqNorm = _liqNorm, liqUv = _liqUv, liqCol = _liqCol, liqIdx = _liqIdx;
 
     const baseX = ch.cx * CHUNK_SIZE;
     const baseZ = ch.cz * CHUNK_SIZE;
     const uStep = 1 / ATLAS_COLS;
     const vStep = 1 / ATLAS_ROWS;
 
-    // Collect local light emitters in the 3x3 chunk neighborhood for fast warm torch/lava flood lighting
-    const lightEmitters: { x: number; y: number; z: number; power: number }[] = [];
+    // Gather pre-cached light emitters in the 3x3 chunk neighborhood in O(E)
+    const lightEmitters: LightEmitter[] = [];
     for (let dcx = -1; dcx <= 1; dcx++) {
       for (let dcz = -1; dcz <= 1; dcz++) {
         const nch = this.chunks.get(chunkKey(ch.cx + dcx, ch.cz + dcz));
         if (!nch) continue;
-        const nBaseX = nch.cx * CHUNK_SIZE;
-        const nBaseZ = nch.cz * CHUNK_SIZE;
-        for (let ey = 0; ey < CHUNK_HEIGHT; ey++) {
-          for (let elz = 0; elz < CHUNK_SIZE; elz++) {
-            for (let elx = 0; elx < CHUNK_SIZE; elx++) {
-              const eb = nch.blocks[elx + elz * CHUNK_SIZE + ey * CHUNK_SIZE * CHUNK_SIZE] as BlockId;
-              if (eb !== BlockId.Air && BLOCKS[eb].lightLevel > 0) {
-                lightEmitters.push({
-                  x: nBaseX + elx,
-                  y: ey,
-                  z: nBaseZ + elz,
-                  power: BLOCKS[eb].lightLevel / 15,
-                });
-              }
-            }
-          }
+        this.ensureChunkEmitters(nch);
+        for (let i = 0; i < nch.lightEmitters.length; i++) {
+          lightEmitters.push(nch.lightEmitters[i]);
         }
       }
     }
@@ -719,11 +1102,12 @@ export class VoxelWorld {
             continue;
           }
 
-          // 3D Torch geometry (stick + glowing flame top)
+          // 3D Torch / Redstone Torch geometry (stick + glowing flame top)
           if (def.torchLike) {
             const tile = getBlockFaceTile(bId, 'pz');
             const ao: [number, number, number, number] = [1, 1, 1, 1];
-            const bright: [number, number, number] = [1.2, 1.12, 0.9];
+            const isRedstoneTorch = bId === BlockId.RedstoneTorch;
+            const bright: [number, number, number] = isRedstoneTorch ? [1.25, 0.45, 0.45] : [1.2, 1.12, 0.9];
             pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx + 0.43, y, lz + 0.43, lx + 0.57, y + 0.68, lz + 0.57, Tile.OakLogSide, [1.0, 0.95, 0.85]);
             pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx,
               [lx + 0.42, y + 0.15, lz + 0.42], [lx + 0.58, y + 0.15, lz + 0.58], [lx + 0.58, y + 0.82, lz + 0.58], [lx + 0.42, y + 0.82, lz + 0.42],
@@ -731,6 +1115,53 @@ export class VoxelWorld {
             pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx,
               [lx + 0.58, y + 0.15, lz + 0.42], [lx + 0.42, y + 0.15, lz + 0.58], [lx + 0.42, y + 0.82, lz + 0.58], [lx + 0.58, y + 0.82, lz + 0.42],
               [0, 1, 0], tile, ao, bright);
+            continue;
+          }
+
+          // Nether Portal translucent glowing pane
+          if (bId === BlockId.NetherPortal) {
+            const tile = Tile.NetherPortal;
+            const ao: [number, number, number, number] = [1, 1, 1, 1];
+            const portalGlow: [number, number, number] = [1.2, 0.85, 1.3];
+            const eastWest =
+              this.getBlock(wx + 1, y, wz) === BlockId.NetherPortal ||
+              this.getBlock(wx - 1, y, wz) === BlockId.NetherPortal ||
+              this.getBlock(wx + 1, y, wz) === BlockId.Obsidian ||
+              this.getBlock(wx - 1, y, wz) === BlockId.Obsidian;
+            if (eastWest) {
+              pushTileQuad(liqPos, liqNorm, liqUv, liqCol, liqIdx,
+                [lx, y, lz + 0.44], [lx + 1, y, lz + 0.44], [lx + 1, y + 1, lz + 0.44], [lx, y + 1, lz + 0.44],
+                [0, 0, 1], tile, ao, portalGlow);
+            } else {
+              pushTileQuad(liqPos, liqNorm, liqUv, liqCol, liqIdx,
+                [lx + 0.44, y, lz], [lx + 0.44, y, lz + 1], [lx + 0.44, y + 1, lz + 1], [lx + 0.44, y + 1, lz],
+                [1, 0, 0], tile, ao, portalGlow);
+            }
+            continue;
+          }
+
+          // Redstone Dust Wire (flat floor strip)
+          if (bId === BlockId.RedstoneWire || bId === BlockId.RedstoneWireOn) {
+            const isOn = bId === BlockId.RedstoneWireOn;
+            const tile = isOn ? Tile.RedstoneWireOn : Tile.RedstoneWireOff;
+            const ao: [number, number, number, number] = [1, 1, 1, 1];
+            const rgb: [number, number, number] = isOn ? [1.28, 0.35, 0.35] : [0.75, 0.55, 0.55];
+            pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx,
+              [lx, y + 0.025, lz + 1], [lx + 1, y + 0.025, lz + 1], [lx + 1, y + 0.025, lz], [lx, y + 0.025, lz],
+              [0, 1, 0], tile, ao, rgb);
+            continue;
+          }
+
+          // Lever (cobblestone base + tilted wooden handle)
+          if (bId === BlockId.LeverOff || bId === BlockId.LeverOn) {
+            const rgb = sampleLightRGB(wx, y, wz);
+            const active = bId === BlockId.LeverOn;
+            pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx, lx + 0.34, y, lz + 0.28, lx + 0.66, y + 0.16, lz + 0.72, Tile.Cobblestone, rgb);
+            const dx = active ? 0.18 : -0.18;
+            pushBoxCustom(cutPos, cutNorm, cutUv, cutCol, cutIdx,
+              lx + 0.44 + dx * 0.5, y + 0.14, lz + 0.44,
+              lx + 0.56 + dx * 0.5, y + 0.56, lz + 0.56,
+              Tile.OakLogSide, active ? [1.2, 0.8, 0.8] : rgb);
             continue;
           }
 
@@ -815,7 +1246,7 @@ export class VoxelWorld {
 
             const tile = getBlockFaceTile(bId, face.dir);
             const rgb: [number, number, number] =
-              bId === BlockId.Lava || bId === BlockId.Glowstone
+              bId === BlockId.Lava || bId === BlockId.Glowstone || bId === BlockId.RedstoneLampOn
                 ? [1.18, 1.05, 0.85]
                 : sampleLightRGB(nx, ny, nz);
 
@@ -850,20 +1281,47 @@ export class VoxelWorld {
               for (let c = 0; c < 4; c++) ao[c] = face.shade;
             }
 
-            const yTopDrop = def.liquid && face.dir !== 'ny' && this.getBlock(wx, y + 1, wz) === BlockId.Air ? 0.12 : 0;
-            const verts = face.corners.map(([vx, vy, vz]) => [
-              lx + vx,
-              y + vy - (vy === 1 ? yTopDrop : 0),
-              lz + vz,
-            ]) as [
+            const fluidTop = def.liquid ? this.getFluidTopHeight(wx, y, wz, bId) : 1;
+            const verts = face.corners.map(([vx, vy, vz]) => {
+              let vHeight = vy;
+              if (def.liquid && vy === 1) {
+                // Smoothly slope corner height across neighboring fluid cells
+                let hSum = fluidTop;
+                let hCount = 1;
+                const ox = vx === 0 ? -1 : 1;
+                const oz = vz === 0 ? -1 : 1;
+                if (this.getBlock(wx + ox, y, wz) === bId) {
+                  hSum += this.getFluidTopHeight(wx + ox, y, wz, bId);
+                  hCount++;
+                }
+                if (this.getBlock(wx, y, wz + oz) === bId) {
+                  hSum += this.getFluidTopHeight(wx, y, wz + oz, bId);
+                  hCount++;
+                }
+                if (this.getBlock(wx + ox, y, wz + oz) === bId) {
+                  hSum += this.getFluidTopHeight(wx + ox, y, wz + oz, bId);
+                  hCount++;
+                }
+                vHeight = hSum / hCount;
+              }
+              return [lx + vx, y + vHeight, lz + vz];
+            }) as [
               [number, number, number],
               [number, number, number],
               [number, number, number],
               [number, number, number],
             ];
 
+            const isLeaves =
+              bId === BlockId.OakLeaves ||
+              bId === BlockId.BirchLeaves ||
+              bId === BlockId.SpruceLeaves ||
+              bId === BlockId.CherryLeaves;
+
             if (def.liquid) {
               pushTileQuad(liqPos, liqNorm, liqUv, liqCol, liqIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, rgb);
+            } else if (isLeaves) {
+              pushTileQuad(leafPos, leafNorm, leafUv, leafCol, leafIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, rgb);
             } else if (def.transparent) {
               pushTileQuad(cutPos, cutNorm, cutUv, cutCol, cutIdx, verts[0], verts[1], verts[2], verts[3], face.normal, tile, ao, rgb);
             } else {
@@ -903,13 +1361,14 @@ export class VoxelWorld {
 
     ch.opaqueMesh = makeMesh(opPos, opNorm, opUv, opCol, opIdx, this.opaqueMat, true, true);
     ch.cutoutMesh = makeMesh(cutPos, cutNorm, cutUv, cutCol, cutIdx, this.cutoutMat, true, true);
+    ch.leavesMesh = makeMesh(leafPos, leafNorm, leafUv, leafCol, leafIdx, this.leavesMat, true, true);
     ch.liquidMesh = makeMesh(liqPos, liqNorm, liqUv, liqCol, liqIdx, this.liquidMat, false, true);
   }
 
   /**
    * 3D DDA voxel traversal raycaster (up to maxDist blocks).
    */
-  public raycastVoxel(origin: THREE.Vector3, dir: THREE.Vector3, maxDist = 5.2): VoxelHit | null {
+  public raycastVoxel(origin: THREE.Vector3, dir: THREE.Vector3, maxDist = 5.2, includeLiquids = false): VoxelHit | null {
     let x = Math.floor(origin.x);
     let y = Math.floor(origin.y);
     let z = Math.floor(origin.z);
@@ -931,7 +1390,7 @@ export class VoxelWorld {
 
     for (let i = 0; i < 64; i++) {
       const b = this.getBlock(x, y, z);
-      if (b !== BlockId.Air && !BLOCKS[b].liquid) {
+      if (b !== BlockId.Air && (includeLiquids || !BLOCKS[b].liquid)) {
         return { x, y, z, nx, ny, nz, blockId: b, distance: dist };
       }
 
